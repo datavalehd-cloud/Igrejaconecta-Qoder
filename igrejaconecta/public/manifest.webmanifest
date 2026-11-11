@@ -1,0 +1,49 @@
+{
+  "name": "IgrejaConecta — Conectando igrejas e pessoas através de eventos",
+  "short_name": "IgrejaConecta",
+  "description": "Plataforma que conecta igrejas e visitantes: gestão de eventos, inscrições, localização, divulgação digital e inteligência artificial. Sem cobrança.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "lang": "pt-BR",
+  "dir": "ltr",
+  "background_color": "#15345b",
+  "theme_color": "#15345b",
+  "categories": ["social", "events", "productivity"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Buscar eventos",
+      "short_name": "Eventos",
+      "url": "/eventos",
+      "description": "Ver eventos publicados perto de você"
+    },
+    {
+      "name": "Mapa",
+      "short_name": "Mapa",
+      "url": "/mapa",
+      "description": "Eventos e igrejas no mapa"
+    }
+  ]
+}

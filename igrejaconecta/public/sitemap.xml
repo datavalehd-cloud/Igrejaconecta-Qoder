@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Sitemap estático (Fase 9). Lista apenas as rotas públicas FIXAS — as mesmas de
+  SITEMAP_PATHS em src/utils/seo.ts. As URLs dinâmicas de evento (/eventos/:slug)
+  e de igreja (/igrejas/:slug) ficam de fora de propósito: só um gerador no build
+  ou no servidor, consultando o banco real, poderia listá-las sem inventar slugs.
+  Nada aqui é fabricado. lastmod é omitido em vez de chutado.
+  Domínio: trocar para o real ao publicar (deve concordar com VITE_SITE_URL).
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://igrejaconecta.app/</loc>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://igrejaconecta.app/eventos</loc>
+    <changefreq>hourly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://igrejaconecta.app/igrejas</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://igrejaconecta.app/mapa</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://igrejaconecta.app/categorias</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://igrejaconecta.app/buscar</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+</urlset>

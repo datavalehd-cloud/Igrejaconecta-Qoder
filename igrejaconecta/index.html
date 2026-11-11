@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!--
+      Identidade canônica (Fase 9). Estes valores espelham src/config/site.ts e
+      utils/seo.ts e são o ÚNICO SEO visível a scrapers de rede num SPA puro
+      (Facebook/LinkedIn/X não executam JS). Ao publicar, troque o domínio abaixo
+      para o real e defina VITE_SITE_URL no build — os dois precisam concordar.
+    -->
+    <title>IgrejaConecta — Conectando igrejas e pessoas através de eventos</title>
+    <meta
+      name="description"
+      content="Plataforma que conecta igrejas e visitantes: gestão de eventos, inscrições, localização, divulgação digital e inteligência artificial. Sem cobrança."
+    />
+    <link rel="canonical" href="https://igrejaconecta.app/" />
+    <meta name="robots" content="index, follow" />
+
+    <!-- Open Graph (site-level; por página seria prerender/SSR, que não existe aqui) -->
+    <meta property="og:site_name" content="IgrejaConecta" />
+    <meta property="og:title" content="IgrejaConecta — Conectando igrejas e pessoas através de eventos" />
+    <meta
+      property="og:description"
+      content="Plataforma que conecta igrejas e visitantes: gestão de eventos, inscrições, localização, divulgação digital e inteligência artificial. Sem cobrança."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://igrejaconecta.app/" />
+    <meta property="og:locale" content="pt_BR" />
+    <meta property="og:image" content="https://igrejaconecta.app/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="IgrejaConecta — conectando igrejas e pessoas através de eventos" />
+
+    <!-- Twitter / X card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="IgrejaConecta — Conectando igrejas e pessoas através de eventos" />
+    <meta
+      name="twitter:description"
+      content="Plataforma que conecta igrejas e visitantes: gestão de eventos, inscrições, localização, divulgação digital e inteligência artificial. Sem cobrança."
+    />
+    <meta name="twitter:image" content="https://igrejaconecta.app/og-image.png" />
+
+    <!-- PWA: tema, ícone instalável e manifest -->
+    <meta name="theme-color" content="#15345b" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- Fontes -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Dados estruturados estáticos (schema.org). O JSON-LD de Evento entra por
+         rota via useDocumentMeta no detalhe público do evento. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "IgrejaConecta",
+        "url": "https://igrejaconecta.app",
+        "logo": "https://igrejaconecta.app/icon-512.png",
+        "description": "Plataforma que conecta igrejas e visitantes: gestão de eventos, inscrições, localização, divulgação digital e inteligência artificial. Sem cobrança."
+      }
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "IgrejaConecta",
+        "url": "https://igrejaconecta.app",
+        "description": "Plataforma que conecta igrejas e visitantes: gestão de eventos, inscrições, localização, divulgação digital e inteligência artificial. Sem cobrança.",
+        "inLanguage": "pt-BR"
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
