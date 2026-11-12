@@ -7,15 +7,17 @@
     <!--
       Identidade canônica (Fase 9). Estes valores espelham src/config/site.ts e
       utils/seo.ts e são o ÚNICO SEO visível a scrapers de rede num SPA puro
-      (Facebook/LinkedIn/X não executam JS). Ao publicar, troque o domínio abaixo
-      para o real e defina VITE_SITE_URL no build — os dois precisam concordar.
+      (Facebook/LinkedIn/X não executam JS). O domínio abaixo é o endereço onde o
+      site está publicado; se ele mudar, troque aqui, em src/config/site.ts, em
+      public/robots.txt e em public/sitemap.xml — os testes de SEO exigem que os
+      quatro concordem.
     -->
     <title>IgrejaConecta — Conectando igrejas e pessoas através de eventos</title>
     <meta
       name="description"
       content="Plataforma que conecta igrejas e visitantes: gestão de eventos, inscrições, localização, divulgação digital e inteligência artificial. Sem cobrança."
     />
-    <link rel="canonical" href="https://igrejaconecta.app/" />
+    <link rel="canonical" href="https://igrejaconecta.vercel.app/" />
     <meta name="robots" content="index, follow" />
 
     <!-- Open Graph (site-level; por página seria prerender/SSR, que não existe aqui) -->
@@ -26,9 +28,9 @@
       content="Plataforma que conecta igrejas e visitantes: gestão de eventos, inscrições, localização, divulgação digital e inteligência artificial. Sem cobrança."
     />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://igrejaconecta.app/" />
+    <meta property="og:url" content="https://igrejaconecta.vercel.app/" />
     <meta property="og:locale" content="pt_BR" />
-    <meta property="og:image" content="https://igrejaconecta.app/og-image.png" />
+    <meta property="og:image" content="https://igrejaconecta.vercel.app/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="IgrejaConecta — conectando igrejas e pessoas através de eventos" />
@@ -40,7 +42,7 @@
       name="twitter:description"
       content="Plataforma que conecta igrejas e visitantes: gestão de eventos, inscrições, localização, divulgação digital e inteligência artificial. Sem cobrança."
     />
-    <meta name="twitter:image" content="https://igrejaconecta.app/og-image.png" />
+    <meta name="twitter:image" content="https://igrejaconecta.vercel.app/og-image.png" />
 
     <!-- PWA: tema, ícone instalável e manifest -->
     <meta name="theme-color" content="#15345b" />
@@ -63,8 +65,8 @@
         "@context": "https://schema.org",
         "@type": "Organization",
         "name": "IgrejaConecta",
-        "url": "https://igrejaconecta.app",
-        "logo": "https://igrejaconecta.app/icon-512.png",
+        "url": "https://igrejaconecta.vercel.app",
+        "logo": "https://igrejaconecta.vercel.app/icon-512.png",
         "description": "Plataforma que conecta igrejas e visitantes: gestão de eventos, inscrições, localização, divulgação digital e inteligência artificial. Sem cobrança."
       }
     </script>
@@ -73,7 +75,7 @@
         "@context": "https://schema.org",
         "@type": "WebSite",
         "name": "IgrejaConecta",
-        "url": "https://igrejaconecta.app",
+        "url": "https://igrejaconecta.vercel.app",
         "description": "Plataforma que conecta igrejas e visitantes: gestão de eventos, inscrições, localização, divulgação digital e inteligência artificial. Sem cobrança.",
         "inLanguage": "pt-BR"
       }

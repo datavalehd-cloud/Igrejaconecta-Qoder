@@ -3,14 +3,16 @@
  * Graph, sitemap, manifest e JSON-LD — tudo que crawler e scraper de rede lê e que,
  * por isso, exige URL **absoluta**.
  *
- * `siteUrl` vem de `VITE_SITE_URL` no build; sem ele, usa o domínio de produção
- * pretendido (`igrejaconecta.app`, o mesmo que já aparece nos e-mails e nas
- * configurações do painel). **Nada está publicado ainda**: até existir um domínio
- * real, canonical e OG apontam para esse default — sobrescreva com `VITE_SITE_URL`
- * ao publicar. Sempre sem barra no fim.
+ * `siteUrl` vem de `VITE_SITE_URL` no build; sem ele, usa o endereço onde o site
+ * está publicado (`igrejaconecta.vercel.app`). Canonical e OG precisam apontar
+ * para o endereço que responde de verdade — um domínio que não existe ainda é
+ * pior do que o subdomínio do Vercel. Se um dia houver domínio próprio, defina
+ * `VITE_SITE_URL` no build **e** troque o mesmo endereço em `index.html`,
+ * `public/robots.txt` e `public/sitemap.xml`: os testes de SEO exigem que os
+ * quatro concordem. Sempre sem barra no fim.
  */
 export const siteUrl: string = (
-  (import.meta.env.VITE_SITE_URL as string | undefined) ?? 'https://igrejaconecta.app'
+  (import.meta.env.VITE_SITE_URL as string | undefined) ?? 'https://igrejaconecta.vercel.app'
 ).replace(/\/+$/, '')
 
 export const siteName = 'IgrejaConecta'

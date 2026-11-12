@@ -1290,22 +1290,31 @@ As escolhas já estão feitas: **backend = Supabase real antes de publicar** (o 
 reais, nunca mockados) e **host = Vercel (team data14)**. O `vercel.json` já está no repositório com
 `buildCommand: npm run build`, `outputDirectory: dist` e a rewrite SPA (`/(.*) → /index.html`) — o
 filesystem do Vercel serve os estáticos (`sw.js`, `manifest.webmanifest`, ícones) **antes** das
-rewrites, então cada arquivo continua exato. **Nada disso foi publicado**; o deploy só acontece após
+rewrites, então cada arquivo continua exato. **Está publicado** em
+https://igrejaconecta.vercel.app (team data14) desde 2026-11-12; cada novo deploy só acontece após
 você digitar **"publica"**.
+
+O endereço canônico é o subdomínio do Vercel: `siteUrl` em `src/config/site.ts` usa esse default (não
+há `VITE_SITE_URL` no `.env.local`), e `index.html`, `public/robots.txt` e `public/sitemap.xml`
+carregam o mesmo endereço hardcoded. `tests/unit/seo.test.ts` amarra os quatro — se um divergir, a
+suíte falha.
 
 Ordem para ir ao ar (o passo 1 é seu — criar o projeto Supabase e colar as chaves):
 
 1. Criar o projeto no [supabase.com](https://supabase.com), aplicar `supabase/migrations/*` (0001–0014)
    e colar `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` (a **anon pública**) no `.env.local`. A
    `service_role` **nunca** vai ao frontend nem ao Vercel. Rode `npm run test:rls` contra o projeto
-   real antes de qualquer deploy (ver seção de RLS).
+   real antes de qualquer deploy (ver seção de RLS). **Feito**: projeto `dlucvyjxidrfyjwuouvp`.
 2. `npm run build` gera `dist/` (estáticos já incluídos). Confira o build com `npm run preview`.
-3. Definir `VITE_SITE_URL` com o domínio real e trocar o domínio hardcoded em `index.html`,
-   `public/robots.txt` (linha `Sitemap:`) e `public/sitemap.xml` para concordarem com ele.
-4. No projeto Vercel (team data14), configurar **as mesmas variáveis** `VITE_SUPABASE_URL`,
-   `VITE_SUPABASE_ANON_KEY` e `VITE_SITE_URL` — pelo painel/CLI do Vercel, **por você**, nunca via
-   agente (segredos não passam pelo agente). O Vercel injeta no build; não commitamos `.env`.
-5. Publicar só após o seu "publica" — até lá o app continua local e em modo demo.
+3. Se um dia existir domínio próprio, trocar o endereço nos quatro lugares acima (ou definir
+   `VITE_SITE_URL` no build **e** trocar os três estáticos) — canonical, OG e sitemap precisam
+   concordar com o endereço que responde.
+4. As variáveis do Vercel são configuradas **por você**, pelo painel/CLI, nunca via agente (segredos
+   não passam pelo agente). O deploy atual é **prebuilt**: o build roda aqui com o `.env.local`, e só
+   o `.vercel/output` sobe — portanto não há variável de ambiente no projeto Vercel, e as chaves
+   públicas ficam embutidas no bundle no momento do build local.
+5. Publicar só após o seu "publica" — `vercel build --prod` + `vercel deploy --prebuilt --prod
+   --scope data14`, com o portão de segurança no `.vercel/output` antes do envio.
 
 ## Onboarding de igreja pelo app (2026-11-12)
 
@@ -1673,10 +1682,10 @@ restrito a `src/services/supabase/client.ts` com a anon key, e nenhuma credencia
    (reflete o estado atual) e não exporta PDF (exige geração no servidor). Tudo isso é decisão de
    produto + infra; o que a Fase 8 entrega é a leitura global real do que a RLS já devolve, gateada em
    `superadmin` e com projeção congelada.
-10. Fase 9 (SEO, PWA, publicação) está **preparada sem publicar**: falta só o ato de publicar, que é
-    seu — host estático com `dist/`, projeto Supabase real com as migrações, e `VITE_SITE_URL` + o
-    domínio trocado em `index.html`/`robots.txt`/`sitemap.xml` (passo a passo na seção da Fase 9).
-    Duas evoluções possíveis depois, ambas honestas como limites hoje: um **gerador de sitemap
-    dinâmico** no build/servidor (para listar `/eventos/:slug` e `/igrejas/:slug` consultando o banco)
-    e **OG por página via prerender/SSR** (para o cartão de rede por rota, que hoje é site-level).
-    Nada disso é fingido como existente.
+10. Fase 9 (SEO, PWA, publicação) está **no ar**: https://igrejaconecta.vercel.app, com o Supabase
+    real e o endereço canônico coerente nos quatro lugares (`site.ts`, `index.html`, `robots.txt`,
+    `sitemap.xml`) desde 2026-11-12. O que continua em aberto: um **domínio próprio** (trocar o
+    endereço nos quatro lugares quando existir) e duas evoluções honestas como limites hoje — um
+    **gerador de sitemap dinâmico** no build/servidor (para listar `/eventos/:slug` e `/igrejas/:slug`
+    consultando o banco) e **OG por página via prerender/SSR** (para o cartão de rede por rota, que
+    hoje é site-level). Nada disso é fingido como existente.

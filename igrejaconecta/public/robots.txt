@@ -8,4 +8,4 @@ Allow: /
 # URLs privadas (login e painéis) — permitidas para ler o noindex, mas não indexam.
 # (Deixamos de fora do sitemap; o meta robots cuida da não-indexação.)
 
-Sitemap: https://igrejaconecta.app/sitemap.xml
+Sitemap: https://igrejaconecta.vercel.app/sitemap.xml
