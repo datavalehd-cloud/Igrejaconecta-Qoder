@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { CalendarDays, Users, Ticket, Megaphone, Plus } from 'lucide-react'
+import { CalendarDays, Users, Ticket, Megaphone, Plus, Building2 } from 'lucide-react'
 import { PageHeader, Stat, Card, CardHeader, CardBody, Button, Badge } from '@/components/common/primitives'
 import { EventStatusBadge } from '@/components/common/StatusBadges'
 import { campaigns, members } from '@/data/mock'
@@ -14,7 +14,13 @@ export function ChurchDashboardPage() {
   const { rows: myChurches, loading: churchesLoading } = useMyChurches()
   const { rows: myEvents, loading: eventsLoading } = useChurchEvents()
   const { rows: allStats, loading: statsLoading } = useRegistrationStats()
-  const church = myChurches.find((c) => c.church_id === session?.churchId)
+  // A sessão pode estar defasada logo depois do onboarding (o vínculo novo ainda
+  // não foi recarregado), então a lista de vínculos é o desempate.
+  const church = myChurches.find((c) => c.church_id === session?.churchId) ?? myChurches[0]
+  // Quem ainda não tem igreja não tem papel nela, então os atalhos de gestão não
+  // levam a lugar nenhum: a entrada é o onboarding. SuperAdmin fica de fora —
+  // ele aprova igrejas em /admin/igrejas, não cria uma para si.
+  const noChurch = !churchesLoading && !church && session?.role !== 'superadmin'
   // Em modo real só o que o banco respondeu aparece como número. Eventos e
   // inscrições já têm leitura real (Fase 3); campanhas e membros seguem mock,
   // então o valor é traço, não zero.
@@ -36,9 +42,26 @@ export function ChurchDashboardPage() {
               : 'Nenhuma igreja ativa associada a esta conta.'
         }
         actions={
-          <Link to="/app/eventos/novo"><Button icon={<Plus className="h-4 w-4" />}>Novo evento</Button></Link>
+          noChurch
+            ? <Link to="/app/onboarding"><Button icon={<Plus className="h-4 w-4" />}>Cadastrar igreja</Button></Link>
+            : <Link to="/app/eventos/novo"><Button icon={<Plus className="h-4 w-4" />}>Novo evento</Button></Link>
         }
       />
+
+      {noChurch && (
+        <Card className="mb-6 border-brand-100 bg-brand-50">
+          <CardBody className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-brand-600"><Building2 className="h-4 w-4" /></span>
+              <div>
+                <p className="font-semibold text-navy">Sua conta ainda não tem igreja</p>
+                <p className="text-sm text-slate-600">Cadastre a comunidade e você entra como administrador dela. O cadastro fica pendente até a aprovação do SuperAdmin.</p>
+              </div>
+            </div>
+            <Link to="/app/onboarding"><Button variant="outline">Cadastrar igreja</Button></Link>
+          </CardBody>
+        </Card>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Eventos" value={eventsLoading ? '—' : myEvents.length} hint={eventsLoading ? 'consultando a agenda' : `${myEvents.filter((e) => e.status === 'published').length} publicados`} tone="brand" />

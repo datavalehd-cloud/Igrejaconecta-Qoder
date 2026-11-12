@@ -1,5 +1,6 @@
 import { supabase } from '@/services/supabase/client'
 import { churches, members } from '@/data/mock'
+import { slugify } from '@/utils/format'
 import type { ApprovalStatus, Church, MemberChurch, RoleKey } from '@/types'
 
 /**
@@ -189,6 +190,134 @@ export function demoMyChurches(userId: string): MemberChurch[] {
         }]
       }),
   )
+}
+
+/**
+ * Onboarding de igrejas (2026-11-12): o cadastro que faltava para uma comunidade
+ * entrar na plataforma sem SQL. O insert manda `created_by` do ator e
+ * `approval_status = 'pending'` — exatamente o que a política `churches_insert`
+ * (0002) exige; o trigger `trg_churches_creator_admin` (0006) anexa o criador
+ * como `church_admin` no mesmo statement. O slug é único: em conflito de
+ * `churches_slug_unique` tenta sufixos `-2`… em vez de falhar de primeira.
+ */
+export interface ChurchDraft {
+  name: string
+  city?: string
+  denomination?: string
+  email?: string
+  phone?: string
+  state?: string
+  website?: string
+  whatsapp?: string
+}
+
+export interface ChurchCreator {
+  id: string
+}
+
+export type ChurchCreateResult =
+  | { ok: true; church: Church; error?: never }
+  | { ok: false; error: string; church?: never }
+
+export const CHURCH_CREATE_NO_ACTOR = 'Entre na sua conta para cadastrar a igreja.'
+export const CHURCH_CREATE_INVALID_NAME = 'O nome da igreja precisa de pelo menos 3 caracteres.'
+export const CHURCH_CREATE_SLUG_TAKEN = 'Não deu para gerar um endereço único para esse nome. Tente outro nome.'
+
+/** Projeção devolvida a quem acabou de criar: o suficiente para a tela confirmar. */
+export const CREATED_COLUMNS = [
+  'id',
+  'name',
+  'slug',
+  'city',
+  'state',
+  'status',
+  'approval_status',
+  'created_at',
+  'updated_at',
+] as const satisfies readonly (keyof Church)[]
+
+/** Slug base + sufixos de desempate, na ordem de tentativa. */
+export function churchSlugCandidates(name: string): string[] {
+  const base = slugify(name)
+  if (!base) return []
+  return [base, ...Array.from({ length: 9 }, (_, i) => `${base}-${i + 2}`)]
+}
+
+function cleanText(value?: string): string | null {
+  const trimmed = (value ?? '').trim()
+  return trimmed || null
+}
+
+export async function createChurch(draft: ChurchDraft, creator?: ChurchCreator): Promise<ChurchCreateResult> {
+  if (!creator?.id) return { ok: false, error: CHURCH_CREATE_NO_ACTOR }
+  const name = draft.name.trim()
+  if (name.length < 3) return { ok: false, error: CHURCH_CREATE_INVALID_NAME }
+  const candidates = churchSlugCandidates(name)
+  if (candidates.length === 0) return { ok: false, error: CHURCH_CREATE_INVALID_NAME }
+
+  const fields = {
+    name,
+    city: cleanText(draft.city),
+    state: cleanText(draft.state),
+    denomination: cleanText(draft.denomination),
+    email: cleanText(draft.email),
+    phone: cleanText(draft.phone),
+    whatsapp: cleanText(draft.whatsapp),
+    website: cleanText(draft.website),
+  }
+
+  if (!supabase) {
+    const taken = new Set(churches.map((c) => c.slug))
+    const slug = candidates.find((candidate) => !taken.has(candidate))
+    if (!slug) return { ok: false, error: CHURCH_CREATE_SLUG_TAKEN }
+    const timestamp = new Date().toISOString()
+    const church: Church = {
+      id: crypto.randomUUID(),
+      slug,
+      ...fields,
+      description: null,
+      logo_url: null,
+      cover_url: null,
+      address: null,
+      zip: null,
+      lat: null,
+      lng: null,
+      status: 'active',
+      approval_status: 'pending',
+      created_at: timestamp,
+      updated_at: timestamp,
+    }
+    churches.push(church)
+    // Espelha o trigger 0006: quem cria vira church_admin ativo da igreja.
+    members.push({
+      id: crypto.randomUUID(),
+      church_id: church.id,
+      user_id: creator.id,
+      role_id: 'r2',
+      role: 'church_admin',
+      status: 'active',
+      created_at: timestamp,
+    })
+    return { ok: true, church: pick(church, CREATED_COLUMNS) }
+  }
+
+  for (const slug of candidates) {
+    const { data, error } = await supabase
+      .from('churches')
+      .insert({ ...fields, slug, created_by: creator.id, status: 'active', approval_status: 'pending' })
+      .select(CREATED_COLUMNS.join(','))
+      .maybeSingle()
+    if (!error && data) return { ok: true, church: data as unknown as Church }
+    if (!error && !data) return { ok: false, error: 'A igreja foi cadastrada, mas não voltou na leitura. Atualize o painel.' }
+    // 23505 = slug duplicado: tenta o próximo sufixo. Qualquer outro erro para.
+    if (error && error.code !== '23505') return { ok: false, error: describeChurchCreateError(error) }
+  }
+  return { ok: false, error: CHURCH_CREATE_SLUG_TAKEN }
+}
+
+function describeChurchCreateError(error: { code?: string; message: string }): string {
+  if (error.code === '42501') return 'Esta conta não pode cadastrar igreja: a política exige que o criador seja você e que a igreja entre como pendente.'
+  return error.message
 }
 
 function pick(church: Church, columns: readonly (keyof Church)[]): Church {

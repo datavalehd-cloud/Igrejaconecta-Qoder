@@ -18,6 +18,7 @@ import { ResetPasswordPage } from '@/pages/auth/ResetPasswordPage'
 import { ConfirmEmailPage } from '@/pages/auth/ConfirmEmailPage'
 
 import { ChurchDashboardPage } from '@/pages/church/ChurchDashboardPage'
+import { ChurchOnboardingPage } from '@/pages/church/ChurchOnboardingPage'
 import { ChurchProfilePage } from '@/pages/church/ChurchProfilePage'
 import { BranchesPage } from '@/pages/church/BranchesPage'
 import { UsersPage } from '@/pages/church/UsersPage'
@@ -79,6 +80,8 @@ export function AppRoutes() {
       >
         <Route index element={<ChurchDashboardPage />} />
         <Route path="perfil" element={<UserProfilePage />} />
+        {/* onboarding: sem guarda de permissão porque é justamente quem ainda não tem igreja (e portanto não tem papel nela) quem cadastra */}
+        <Route path="onboarding" element={<ChurchOnboardingPage />} />
         <Route path="igreja" element={<ProtectedRoute permission="church.manage"><ChurchProfilePage /></ProtectedRoute>} />
         <Route path="filiais" element={<BranchesPage />} />
         {/* roster: qualquer membro da igreja lê (a view mascara os contatos); convites ficam atrás de members.manage */}

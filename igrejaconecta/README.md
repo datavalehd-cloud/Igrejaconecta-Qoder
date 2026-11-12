@@ -180,7 +180,7 @@ src/
   pages/
     public/      # home, eventos, detalhe, igrejas, mapa, categorias, busca, visitante
     auth/        # login (com MFA), cadastro, recuperação, redefinição, confirmação
-    church/      # painel da igreja (fases 2, 3, 5, 6, 7)
+    church/      # painel da igreja (fases 2, 3, 5, 6, 7) + onboarding de igreja (/app/onboarding)
       marketing/ # campanhas, redes sociais
       ai/        # IgrejaConecta AI
       automation/# automações
@@ -198,7 +198,8 @@ src/
     supabase/    # client plugável
     auth/        # authTypes (contrato) + demoBackend + supabaseBackend + authService
     data/        # rosterService (view church_roster), memberService (convites, papéis, aceite),
-                 # churchService (diretório público, lista de gestão, igrejas da conta),
+                 # churchService (diretório público, lista de gestão, igrejas da conta e o
+                 # createChurch do onboarding — pending + slug único),
                  # churchApprovalService (escrita de approval_status pelo SuperAdmin),
                  # auditService (verbos e leitura da trilha; a escrita real é do trigger 0009),
                  # eventService (diretório público, evento por slug, agenda da igreja, categorias e a
@@ -244,7 +245,7 @@ tests/           # unit / integration / e2e
 
 - Público: `/`, `/eventos`, `/eventos/:slug`, `/igrejas`, `/mapa`, `/categorias`, `/buscar`, `/visitante/perfil`
 - Auth: `/login`, `/cadastro`, `/recuperar-senha`, `/redefinir-senha`, `/confirmar-email`
-- Igreja: `/app`, `/app/igreja`, `/app/filiais`, `/app/usuarios`, `/app/ministerios`, `/app/horarios`, `/app/eventos`, `/app/calendario`, `/app/inscricoes`, `/app/checkin`, `/app/marketing`, `/app/redes`, `/app/ia`, `/app/automacoes`, `/app/perfil`
+- Igreja: `/app`, `/app/onboarding`, `/app/igreja`, `/app/filiais`, `/app/usuarios`, `/app/ministerios`, `/app/horarios`, `/app/eventos`, `/app/calendario`, `/app/inscricoes`, `/app/checkin`, `/app/marketing`, `/app/redes`, `/app/ia`, `/app/automacoes`, `/app/perfil`
 - SuperAdmin: `/admin`, `/admin/igrejas`, `/admin/usuarios`, `/admin/organizacoes`, `/admin/integracoes`, `/admin/logs`, `/admin/auditoria`, `/admin/relatorios`, `/admin/suporte`, `/admin/configuracoes`
 - Erros: `/acesso-negado`, `*` (404)
 
@@ -1306,6 +1307,92 @@ Ordem para ir ao ar (o passo 1 é seu — criar o projeto Supabase e colar as ch
    agente (segredos não passam pelo agente). O Vercel injeta no build; não commitamos `.env`.
 5. Publicar só após o seu "publica" — até lá o app continua local e em modo demo.
 
+## Onboarding de igreja pelo app (2026-11-12)
+
+O cadastro de igreja já existia **no banco** desde a Fase 1 — `churches_insert` (0002) aceita o insert
+de quem está logado e `trg_churches_creator_admin` (0006) anexa o criador como `church_admin` — mas
+nenhuma tela chamava isso: entrar na plataforma dependia de SQL Editor. Agora existe
+`/app/onboarding` (`src/pages/church/ChurchOnboardingPage.tsx` + `createChurch` em
+`src/services/data/churchService.ts`), com entrada pelo painel quando a conta não tem igreja.
+
+Fluxo real: a conta criada em `/cadastro` entra sem igreja → `/app` mostra o cartão "Sua conta ainda
+não tem igreja" → `/app/onboarding` → o insert sai com `created_by` = id da sessão e
+`approval_status = 'pending'` → o trigger 0006 anexa o criador como `church_admin` no mesmo statement
+→ a tela avisa que nada funciona antes da aprovação do SuperAdmin e que é preciso recarregar a sessão
+para o papel valer. O SuperAdmin aprova em `/admin/igrejas`, como sempre.
+
+### Duas camadas, como nas outras escritas
+
+| Camada | O que garante |
+|--------|---------------|
+| Banco (0002 + 0006) | `churches_insert` só aceita `created_by = auth.uid() and approval_status = 'pending'` — nem forjar o criador nem criar igreja já aprovada passa. O papel vem do trigger `SECURITY DEFINER`, que só conhece `church_admin` (o guarda da 0005 segue valendo para `superadmin`) |
+| App (`createChurch`) | Nunca escolhe papel nem status: o insert é fixo nesses dois campos. Slug único com sufixos `-2`…`-10` em vez de falhar no `churches_slug_unique` (23505). Sem criador ou com nome < 3 caracteres, recusa antes de consultar. Erro 42501 volta como frase legível, não como stack |
+
+A projeção devolvida (`CREATED_COLUMNS`) não inclui `created_by`, `email`, `website` nem coordenadas —
+é o mínimo para a tela confirmar o que acabou de criar.
+
+### Sessão defasada logo depois do cadastro
+
+A sessão é uma foto do login; o vínculo novo só existe na leitura. Por isso os dois lugares que
+decidem "tem igreja?" consultam a **lista de vínculos**, não só `session.churchId`:
+
+- `/app/onboarding` recusa criar de novo se a conta já tem vínculo (evita igreja duplicada por um
+  clique a mais) e, quando o vínculo é mais novo que a sessão, oferece **Recarregar sessão** em vez de
+  um link que o guarda de permissão barraria;
+- `/app` usa o vínculo como desempate para mostrar o nome e o status da igreja pendente.
+
+No modo demo, `demoBackend.restore()` passou a recalcular papel e igreja a partir da loja
+(`members`), espelhando o `loadSession` real que lê do banco. Sem isso, quem criava a igreja continuava
+"sem igreja" até sair e entrar de novo. SuperAdmin continua sem igreja, como no backend real.
+
+### Testes e prova por mutação
+
+`tests/unit/churchOnboarding.test.ts` (17 casos): recusas, espelho demo do insert + do trigger, slug em
+colisão, candidatos esgotados, campos opcionais virando `null`, projeção, e anti-deriva lendo o fonte do
+serviço e as migrações 0002/0006 (se alguém trocar `'pending'` por `'approved'` ou remover o
+`created_by`, o teste falha).
+
+Mutações aplicadas e revertidas — todas pegas:
+
+| Mutação | Casos que falharam |
+|---------|--------------------|
+| `approval_status: 'pending'` → `'approved'` (demo e real) | 4, inclusive o anti-deriva do fonte |
+| remover `created_by: creator.id` do insert real | 1 (anti-deriva) |
+| vínculo demo como `superadmin`/`r1` em vez de `church_admin`/`r2` | 2 |
+| `refresh()` do demo virando no-op | 1 (visitante não virava administrador) |
+| tirar o ramo de SuperAdmin do `refresh()` | 1 (superadmin ganhava igreja) |
+
+**Aviso que vale para qualquer teste novo:** o `.env.local` também é carregado no modo de teste, então
+o client real existe e um teste de escrita demo falaria com o banco que está no ar. Todo teste que
+exercita a loja demo precisa de `vi.mock('@/services/supabase/client', () => ({ supabase: null }))` —
+convenção que `admin`/`branches`/`events`/`marketing`/`registrations`/`auditTrail` já seguiam e que
+faltava em `churchApproval.test.ts` e `memberWrites.test.ts` (corrigido aqui; eles só passaram a falhar
+quando as chaves reais entraram no `.env.local`).
+
+### Rodar em modo demo com as chaves reais presentes
+
+```bash
+npm run dev -- --mode demo   # com um .env.demo.local local (ignorado por *.local)
+```
+
+`.env.demo.local` só precisa de `VITE_SUPABASE_URL=` e `VITE_SUPABASE_ANON_KEY=` vazios: o modo
+`demo` carrega depois do `.env.local` e o `client.ts` devolve `null`. É como a verificação abaixo foi
+feita, sem tocar no banco que está no ar.
+
+### Verificação no browser (modo demo, 2026-11-12)
+
+- `visitante@email.com` → `/app`: cartão "Sua conta ainda não tem igreja" + botão **Cadastrar igreja**;
+- `/app/onboarding`: formulário com as 27 UFs, nome obrigatório (mín. 3) → envio → cartão verde
+  "Igreja Batista Vale da Bênção · aguardando aprovação", com os três avisos (aprovação, recarregar
+  sessão, MFA) e a nota de que no demo nada é gravado;
+- voltando ao `/app` sem recarregar: "Painel de Igreja Batista Vale da Bênção · status pending",
+  Membros 1, e o cartão de onboarding sumiu;
+- `ana@ibcentral.org.br` (já tem igreja) → `/app/onboarding`: "Igreja Batista Central · Igreja
+  aprovada…" com **Abrir dados da igreja**, sem formulário;
+- `admin@igrejaconecta.app` (SuperAdmin, MFA) → `/app/onboarding`: "A sua conta é a direção da
+  plataforma" com **Ir para aprovações**, sem formulário;
+- console sem erro nem aviso.
+
 ## Testes de RLS e isolamento entre igrejas
 
 **827 declarações (grupos A–P)** em `supabase/tests/database/rls_isolation.sql`, executados contra
@@ -1522,7 +1609,7 @@ restrito a `src/services/supabase/client.ts` com a anon key, e nenhuma credencia
 | Fase | Escopo | Estado neste esqueleto |
 |------|--------|------------------------|
 | 1 | Fundação, auth, RBAC, banco, RLS | Schema + RLS prontos; telas auth em demo |
-| 2 | Igrejas, filiais, usuários, equipes, aprovação | Usuários lendo **e escrevendo** no banco (view 0007 + convites 0008); listas de igrejas lendo o real (`churchService`) e a aprovação escrevendo o real (`churchApprovalService`, grupo J), com trilha atômica no banco e leitura de auditoria (`auditService`, grupos K e L, migração 0009); **filiais lendo e escrevendo** (0013 + `branchService`, grupo O — sem delete); equipes mockadas |
+| 2 | Igrejas, filiais, usuários, equipes, aprovação | **Onboarding de igreja pelo app** (`/app/onboarding` + `createChurch`: insert `pending` com `created_by` da sessão, criador virando `church_admin` pelo trigger 0006); usuários lendo **e escrevendo** no banco (view 0007 + convites 0008); listas de igrejas lendo o real (`churchService`) e a aprovação escrevendo o real (`churchApprovalService`, grupo J), com trilha atômica no banco e leitura de auditoria (`auditService`, grupos K e L, migração 0009); **filiais lendo e escrevendo** (0013 + `branchService`, grupo O — sem delete); equipes mockadas |
 | 3 | Eventos, calendário, inscrições, check-in, portal | Eventos **lendo e escrevendo** (0011 + `eventService`, grupo M) e inscrições **lendo e escrevendo** (0012 + `registrationService`, grupo N): criação/edição/transição de status com a porta `events.publish`, inscrição pública com lista de espera, contagem real de inscritos, lista/CSV da equipe, check-in por código e cancelamento com promoção da fila. **Filial e localização no evento gravam** (0013, M11). Falta upload de capa no Storage e o QR Code impresso |
 | 4 | Google Maps, GPS, localização | **Mapa público real**: Leaflet + OpenStreetMap (decisão sua, sem chave), GPS do navegador **sem geocodificador**, distância por haversine, ordenação por proximidade e botão Rota. Só é plotada igreja com coordenada real; sem coordenada a lista avisa e o pino não é inventado; sem rede os tiles falham com aviso honesto. Coordenadas também são digitáveis nos formulários de igreja, filial e evento |
 | 5 | Divulgação social (Meta/TikTok/WhatsApp) | Campanhas **lendo e escrevendo** no banco (0014 + `marketingService`, grupo P) com RLS por `marketing.manage` e o trigger que **só deixa `service_role` publicar** — o botão Publicar devolve aviso honesto e não marca nada. Distribuição **sem chave** real (WhatsApp/wa.me, copiar link com UTM, Web Share) no painel e na página pública do evento. `/app/redes` mostra todas as contas como **Não conectado**, sem botão de conectar de mentira. Postagem real em rede fica de fora (exige OAuth + backend com tokens) |
@@ -1541,7 +1628,9 @@ restrito a `src/services/supabase/client.ts` com a anon key, e nenhuma credencia
    eventos (Fase 3, passos 1 e 3) — leitura e escrita —, inscrições (passo 2) — leitura e escrita —,
    filiais e localização (Fase 4) — leitura e escrita —, campanhas (Fase 5) — leitura e escrita, com a
    publicação bloqueada no banco — e as leituras globais do SuperAdmin (Fase 8) — diretório de usuários,
-   eventos de todas as igrejas e relatórios agregados, gateadas em `superadmin`.**
+   eventos de todas as igrejas e relatórios agregados, gateadas em `superadmin`. O onboarding de igreja
+   (cadastro pelo `/app/onboarding`, com o criador virando `church_admin` pelo trigger 0006) também
+   escreve de verdade — veja a seção própria.**
    o padrão de leitura está em `services/data/churchService.ts`, `eventService.ts`,
    `registrationService.ts`, `branchService.ts`, `marketingService.ts` e `adminService.ts` (e em
    `rosterService.ts`), o de escrita em `memberService.ts`, `churchApprovalService.ts`, `eventService.ts`,

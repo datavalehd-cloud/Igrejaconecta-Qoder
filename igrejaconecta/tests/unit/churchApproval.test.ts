@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { churches, auditLogs } from '@/data/mock'
 import { setChurchApprovalStatus, APPROVAL_COLUMNS } from '@/services/data/churchApprovalService'
 import { demoDirectoryChurches, DIRECTORY_COLUMNS } from '@/services/data/churchService'
@@ -13,6 +13,11 @@ const suite = readFileSync(path.join(root, 'supabase/tests/database/rls_isolatio
 const original = new Map(churches.map((c) => [c.id, { approval_status: c.approval_status, updated_at: c.updated_at }]))
 const originalAudit = structuredClone(auditLogs)
 const admin = { id: 'u0', email: 'admin@igrejaconecta.app', role: 'superadmin' as const }
+
+// Estes casos são sobre o espelho demo da aprovação. Sem o mock o client real existe
+// (o `.env.local` também é carregado no modo de teste) e a suíte escreveria no banco
+// que está no ar — com ids do mock, que nem são uuid, então só falharia mesmo assim.
+vi.mock('@/services/supabase/client', () => ({ supabase: null }))
 
 afterEach(() => {
   auditLogs.splice(0, auditLogs.length, ...structuredClone(originalAudit))

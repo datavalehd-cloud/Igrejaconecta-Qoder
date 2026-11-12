@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { demoRoster } from '@/services/data/rosterService'
 import {
   acceptInvitation,
@@ -15,6 +15,10 @@ import {
  * Se as duas leituras divergirem, a demonstração estaria exibindo algo que o banco
  * recusaria.
  */
+
+// Estes casos são sobre a loja demo. Sem o mock o client real existe (o `.env.local`
+// também é carregado no modo de teste) e a suíte escreveria no banco que está no ar.
+vi.mock('@/services/supabase/client', () => ({ supabase: null }))
 
 const Church = 'ch1'
 const mail = (tag: string) => `${tag}@convite.test`
