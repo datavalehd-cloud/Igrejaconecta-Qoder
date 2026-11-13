@@ -1536,6 +1536,99 @@ igreja `9cb79cc7-…` (Administração IgrejaConecta), o SuperAdmin `4a2b1bee-�
 nunca é apagada junto com a igreja. Quem procurar a igreja do piloto não vai encontrar; a evidência
 acima é a tabela, não o banco.
 
+## Check-in medido no ar e o painel de duas fontes (2026-11-13)
+
+O check-in foi medido na tela `/app/checkin` em produção, **com sessão de igreja**. SuperAdmin não
+serve para isso: `src/services/auth/supabaseBackend.ts:60-72` devolve
+`churchId: role === 'superadmin' ? undefined : …`, então a tela fica vazia para quem é a direção da
+plataforma. A sessão usada foi uma segunda conta com vínculo `manager` temporário (`manager` não está
+em `MFA_REQUIRED_ROLES`, `src/utils/rbac.ts:51`, então entra só com senha), apagado no fim.
+
+### Os cinco caminhos, com o corpo da resposta da RPC
+
+| # | Digitado na tela | O que o provedor respondeu | O que a tela fez |
+|---|---|---|---|
+| 1 | `A8C-35E` (confirmada) | `POST /rest/v1/rpc/check_in_registration` → `200 "presente"` | "Check-in de … registrado.", badge **Presente**, linha nova no log do balcão |
+| 2 | `a8c35e` (minúsculo, sem traço — como um scanner USB digita) | `200 "ja_presente"` | "Esta pessoa já estava registrada como presente." e **nenhuma** linha nova no log |
+| 3 | `ZZZ-999` (inventado) | — | recusa local, com **zero chamadas de rede**: o código é resolvido na lista antes da RPC |
+| 4 | `ACB-857` (lista de espera) | `200 "presente"` | virou **Presente** — o balcão promove a fila |
+| 5 | `5E2-5BB`, cancelada por SQL **depois** de a tela carregar | `200 "cancelada"` | "Esta inscrição foi cancelada." A linha ainda aparecia como "Confirmada" e o servidor venceu |
+
+O caminho 4 é uma **decisão em aberto**, não um bug: `check_in_registration` (`0012_event_registrations.sql:224`)
+promove qualquer estado que não seja `cancelled`, então quem estava na fila entra sem ter consumido
+vaga. Se a porta do balcão deve recusar `waitlist`, isso muda política e audiência do registro — pede
+revisão de risco escrita e caso novo no grupo N antes de mexer.
+
+### O defeito achado: o "Resumo" misturava duas fontes e recarregava só uma
+
+| Número do painel | De onde vem |
+|---|---|
+| Inscritos, Check-in feito, Lista de espera | view `event_registration_stats`, pelo `useRegistrationStats` de `CheckInPage.tsx:20` |
+| Presentes % | `presentCount / expectedCount` calculado da **lista** (`CheckInPage.tsx:34-36`), com a cancelada fora do denominador |
+
+O `reload()` no fim de `handleCheck` refazia apenas a lista. Na tela, logo depois de um check-in:
+`Check-in feito 0` ao lado de `Presentes 67%`, e `Lista de espera 1` com a pessoa já marcada como
+presente. Sumia ao recarregar a página — mas no balcão ninguém recarrega a página entre uma pessoa e a
+próxima, que é justamente o fluxo da tela.
+
+**Conserto** (commit `59b28e7`, duas linhas): a tela desestrutura `reload: reloadStats` do hook
+(`CheckInPage.tsx:20`) e chama os dois juntos (`CheckInPage.tsx:72-73`). Nenhum hook mudou:
+`useRegistrationStats` já devolvia o `reload` vindo do `useKeyedList` (`useKeyedList.ts:36`,
+exportado em `useKeyedList.ts:42`).
+
+**Testes**: `tests/unit/registrations.test.ts:562`, dois casos lidos do fonte das telas e dos hooks —
+o primeiro conta os `reload()` de `CheckInPage.tsx` e exige o mesmo número de pares
+`reload()` + `reloadStats()`; o segundo amarra o `reloadStats` ao refetch real (o `setTick` do
+`useKeyedList`) e não a um no-op, com sonda anti-deriva nas dependências do effect. Mutações
+aplicadas e revertidas, cada uma derrubando exatamente um caso:
+
+| Mutação | Casos que falharam |
+|---|---|
+| tirar o `reloadStats()` de `handleCheck` | 1 (o par deixa de existir) |
+| `useRegistrationStats` devolver `{ byEvent }` sem o `...result` | 1 (o `reload` deixa de ser o refetch do hook) |
+
+### Reverificação no ar, depois de publicar
+
+Mesmo procedimento (vínculo temporário + evento fixture com `capacity = 2` + 1 `confirmed` + 1
+`waitlist`), conferindo o painel **sem recarregar a página entre os passos**:
+
+| Momento | O que o painel mostrou |
+|---|---|
+| ao abrir | `Inscritos 2 · Check-in feito 0 · Lista de espera 1 · Presentes 0%` |
+| depois de `B7D-4KA` | `Check-in feito 1` **junto com** `Presentes 50%` |
+| depois de `C2E-9HF` (era fila) | `Check-in feito 2 · Lista de espera 0 · Presentes 100%` |
+
+Bundle servido na aba: `assets/index-rZHaPKHG.js`, o mesmo arquivo do build local que contém o fix —
+a conferência não rodou em versão antiga. Console: zero mensagens. Apagado o vínculo temporário, a
+mesma sessão voltou a cair em `403 /acesso-negado`, como antes de ele existir.
+
+Fica aberto, e o teste não pega de propósito: o botão **Tentar de novo** da tela de erro
+(`CheckInPage.tsx:85`) repete só a lista, porque `onClick={reload}` é referência e não chamada. Numa
+recarga depois de falha de rede isso pode deixar o painel uma batida atrasado; não é o fluxo medido.
+
+### Fixture no SQL Editor do projeto real (o procedimento)
+
+Escrever dado de teste no editor do Supabase não é só colar o INSERT. Cinco coisas travam, todas com
+saída conhecida:
+
+| O que acontece | Por quê | O que fazer |
+|---|---|---|
+| `42501: publicar evento exige a permissão events.publish` | `enforce_event_publish` (`0011_events.sql:97`) chama `is_superadmin()` / `has_church_permission()`, que leem `auth.uid()`; no editor não há sessão | dentro de `begin; … commit;`, `select set_config('request.jwt.claim.sub', (select cm.user_id::text … papel superadmin … limit 1), true)` antes do insert. `auth.uid()` também aceita `request.jwt.claims` como JSON com `sub` — as duas formas funcionam. Com `is_local = true` o GUC volta sozinho no commit e não fica pendurado na conexão |
+| modal "Potential issue detected — this query creates a table without enabling RLS" | a heurística do editor dispara em **INSERT puro** e em `create temp table`; é falso positivo, não há DDL nenhum | clicar **Run without RLS**. **Nunca** "Run and enable RLS": esse botão emite `ALTER TABLE … ROW LEVEL SECURITY` na tabela real do projeto |
+| a grade volta vazia depois de gravar | o editor devolve só o conjunto do **último** statement, e `commit;` não tem conjunto | a transação grava; os ids se leem numa **consulta separada**, só de leitura |
+| `delete` com contagem na mesma statement devolve `evento_apagado 1` ao lado de `eventos 1` | as CTEs de leitura da própria statement veem o snapshot do **início** dela | conferir o estado final por uma segunda consulta de leitura — a primeira resposta não é a prova |
+| `create temp table x as insert … returning …` → `42601 syntax error at or near "insert"` | CTAS não aceita `INSERT … RETURNING` | usar `with … as (insert … returning …)`, que ainda amarra tudo numa transação só |
+
+Já dentro da tabela, `event_registrations` ainda exige o `church_id` do evento no insert: o trigger
+`enforce_registration_church` (`0012_event_registrations.sql:77`) responde `42501` se faltar ou
+divergir — é o preço de escrever por fora da RPC, e é o mesmo guarda que a suíte mede em N12.
+
+Regras de casa que valem para qualquer fixture aqui: **uma** transação (falhou = nada escrito);
+consulta de estado **antes** e **depois**; limpeza com guardas por id **e** slug **e** papel **e**
+e-mail, para não apagar linha parecida; e estado final conferido por leitura. O desta medição
+terminou em `eventos 0 | inscrições 0 | vínculos 1 | contas 2 | auditoria 6`, roster só
+`datavalehd@gmail.com / superadmin` — nada dos testes ficou no banco.
+
 ## Testes de RLS e isolamento entre igrejas
 
 **827 declarações (grupos A–P)** em `supabase/tests/database/rls_isolation.sql`, executados contra
@@ -1791,7 +1884,9 @@ restrito a `src/services/supabase/client.ts` com a anon key, e nenhuma credencia
    QR; hoje o check-in é pelo código digitado ou bipado) e o **upload da capa para o Storage** (hoje é
    URL colada). Filial e latitude/longitude no evento foram entregues na Fase 4, e a leitura global de
    eventos no painel do SuperAdmin, na Fase 8. Confirmar a inscrição por e-mail/WhatsApp depende do
-   mesmo provedor real do item 3.
+   mesmo provedor real do item 3. Falta também a **decisão do balcão sobre a lista de espera** — hoje
+   o check-in promove `waitlist` sem ter consumido vaga, medido em produção e descrito em
+   [Check-in medido no ar e o painel de duas fontes](#check-in-medido-no-ar-e-o-painel-de-duas-fontes-2026-11-13).
 6. **Decisão pendente de segurança:** sair de `published` (voltar a rascunho ou cancelar) exige hoje só
    `events.manage` — é o que a 0011 faz, e o app reproduz. Se tirar um evento do ar deve exigir
    `events.publish`, é mudança de política: precisa de revisão de risco escrita e de caso novo na suíte
