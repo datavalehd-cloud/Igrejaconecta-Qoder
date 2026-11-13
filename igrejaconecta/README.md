@@ -125,17 +125,78 @@ No painel, o menu do usuário permite **trocar de papel** para explorar as telas
    - `supabase/migrations/0008_church_invitations.sql`
    - `supabase/migrations/0009_church_approval_audit.sql`
    - `supabase/migrations/0010_audit_insert_guard.sql`
-   - `supabase/seed.sql` (papéis, permissões e matriz RBAC)
-4. No painel do Supabase, em **Authentication → URL Configuration**, adicione:
+   - `supabase/migrations/0011_events.sql`
+   - `supabase/migrations/0012_event_registrations.sql`
+   - `supabase/migrations/0013_branches_location.sql`
+   - `supabase/migrations/0014_marketing_campaigns.sql`
+4. **Obrigatório — rode `supabase/seed.sql` no SQL Editor.** Sem ele o esquema existe mas a matriz
+   RBAC não: `permissions` e `role_permissions` ficam vazios, `has_church_permission()` devolve
+   `false` para todo mundo que não é SuperAdmin, e **toda** escrita gateada por permissão (evento,
+   campanha, membro, convite, filial, inscrição, edição da igreja) cai em `403 / 42501`; o roster ainda
+   volta com e-mail e telefone mascarados. O sintoma engana porque o cadastro de igreja e a leitura
+   continuam funcionando — só a primeira escrita de evento falha. Detalhes em
+   [Seed obrigatório](#seed-obrigatório-papéis-permissões-e-matriz-rbac).
+   O arquivo é idempotente (`on conflict do nothing`) e **não** insere usuário, igreja nem
+   credencial — pode rodar de novo sem risco.
+5. No painel do Supabase, em **Authentication → URL Configuration**, adicione:
    - Site URL: `http://localhost:5173`
    - Redirect URLs: `http://localhost:5173/login` e `http://localhost:5173/redefinir-senha`
      (confirmação de e-mail volta para `/login`; recuperação de senha volta para `/redefinir-senha`).
-5. Em **Authentication → MFA Factors**, habilite **TOTP** (o app usa `factorType: 'totp'`).
-6. Crie o primeiro usuário (SuperAdmin) — pelo cadastro do app ou manualmente no painel — e
+6. Em **Authentication → MFA Factors**, habilite **TOTP** (o app usa `factorType: 'totp'`).
+7. Crie o primeiro usuário (SuperAdmin) — pelo cadastro do app ou manualmente no painel — e
    registre a associação em `church_members` com o `role_id` correspondente ao papel. Sem
-   associação ativa, o usuário entra como **visitante**.
-7. Reinicie o dev server. `src/services/supabase/client.ts` detecta as chaves e o
+   associação ativa, o usuário entra como **visitante**. (`supabase/promote_superadmin.sql` faz isso
+   para o dono da conta; ele exige vínculo ativo em alguma igreja.)
+8. Reinicie o dev server. `src/services/supabase/client.ts` detecta as chaves e o
    `AuthContext` troca automaticamente para o backend real.
+
+### Seed obrigatório (papéis, permissões e matriz RBAC)
+
+`supabase/seed.sql` **não é opcional** e não vem junto com as migrações. Ele insere:
+
+| O que | Quantidade |
+|-------|-----------|
+| `roles` | 6 (`superadmin`, `church_admin`, `manager`, `communicator`, `pastor`, `visitor`) |
+| `permissions` | 11 (`church.manage`, `events.manage`, `members.manage`, …) |
+| `role_permissions` | 33 pares (superadmin 11, church_admin 9, manager 7, communicator 3, pastor 3) |
+| `system_settings` | 2 (`platform`, `privacy`) |
+
+Sem essas linhas, `has_church_permission(p_church, p_perm)` (0001) — que é
+`is_superadmin() OR exists(vínculo ativo ⋈ roles ⋈ role_permissions ⋈ permissions)` — devolve `false`
+para qualquer não-SuperAdmin, porque o join não acha permissão nenhuma. Quem usa a função:
+
+| Onde | Permissão | O que quebra sem o seed |
+|------|-----------|------------------------|
+| `churches` UPDATE (0002) | `church.manage` | editar os dados da igreja |
+| `church_members` INSERT/UPDATE (0002) | `members.manage` | gerenciar membros |
+| `church_invitations` (0008) | `members.manage` | convidar / aceitar convite |
+| `church_roster` (0007) | `members.manage` | `email` e `phone` voltam `null` — o roster aparece mascarado até para o administrador |
+| `events` INSERT/UPDATE + trigger de publicação (0011) | `events.manage` / `events.publish` | criar, editar e publicar evento |
+| `event_registrations` + RPCs (0012) | `registrations.manage` | lista de inscrições, check-in, cancelamento |
+| `church_branches` (0013) | `church.manage` | criar/editar filial |
+| `marketing_campaigns` (0014) | `marketing.manage` | criar/editar campanha |
+
+Em todos os casos o banco responde `403 {"code":"42501","message":"new row violates row-level
+security policy for table …"}`. A mensagem é idêntica à de uma violação real do `WITH CHECK`, o que faz
+o diagnóstico parecer problema de código.
+
+Para confirmar se o seed já foi aplicado, no SQL Editor:
+
+```sql
+select (select count(*) from permissions)      as permissoes,   -- esperado: 11
+       (select count(*) from roles)            as papeis,       -- esperado: 6
+       (select count(*) from role_permissions) as matriz;       -- esperado: 33
+```
+
+`system_settings` volta 0 para quem não é SuperAdmin — a leitura é restrita (`system_settings_read`),
+não é sinal de seed faltando.
+
+**Episódio real (2026-11-13):** o projeto `dlucvyjxidrfyjwuouvp` estava no ar com as 14 migrações e
+sem o seed. O onboarding de igreja funcionava (o trigger 0006 anexa o criador e `churches_insert` não
+usa `has_church_permission`), a aprovação pelo SuperAdmin funcionava (SuperAdmin é
+`is_superadmin()`), e o **primeiro** evento criado pelo `church_admin` recém-aprovado caía em
+`42501`. Depois de rodar o seed: 11 / 6 / 33, `has_church_permission(…) → true`, e o evento foi
+criado com `201`.
 
 ### O que muda do demo para o real
 
@@ -215,12 +276,13 @@ src/
   data/          # mocks
   routes/        # AppRoutes + guards (ProtectedRoute)
 supabase/
-  migrations/    # schema + RLS + storage + hardening + guards (0004..0012)
+  migrations/    # schema + RLS + storage + hardening + guards (0001..0014)
   functions/     # Edge Functions (fases 5-8, a implementar)
   tests/
     database/    # rls_isolation.sql — suíte de isolamento (roda local e no projeto)
     local/       # shim_supabase.sql — emula auth.*/storage.* só para o Postgres local
-  seed.sql
+  seed.sql                 # OBRIGATÓRIO depois das migrações: papéis, permissões e matriz RBAC
+  promote_superadmin.sql   # promove o dono da conta a superadmin (exige vínculo ativo em igreja)
 scripts/
   rls-local.mjs  # sobe Postgres embarcado (sem Docker) e roda a suíte
   make-pwa-icons.ps1  # gera icon-192/512, maskable-512, apple-touch-icon e og-image
@@ -1301,10 +1363,13 @@ suíte falha.
 
 Ordem para ir ao ar (o passo 1 é seu — criar o projeto Supabase e colar as chaves):
 
-1. Criar o projeto no [supabase.com](https://supabase.com), aplicar `supabase/migrations/*` (0001–0014)
+1. Criar o projeto no [supabase.com](https://supabase.com), aplicar `supabase/migrations/*` (0001–0014),
+   **rodar `supabase/seed.sql`** (obrigatório — sem ele toda escrita gateada por permissão falha com
+   `42501`; ver [Seed obrigatório](#seed-obrigatório-papéis-permissões-e-matriz-rbac))
    e colar `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` (a **anon pública**) no `.env.local`. A
    `service_role` **nunca** vai ao frontend nem ao Vercel. Rode `npm run test:rls` contra o projeto
-   real antes de qualquer deploy (ver seção de RLS). **Feito**: projeto `dlucvyjxidrfyjwuouvp`.
+   real antes de qualquer deploy (ver seção de RLS). **Feito**: projeto `dlucvyjxidrfyjwuouvp`,
+   migrações 0001–0014 aplicadas e seed aplicado em 2026-11-13 (11 permissões / 6 papéis / 33 pares).
 2. `npm run build` gera `dist/` (estáticos já incluídos). Confira o build com `npm run preview`.
 3. Se um dia existir domínio próprio, trocar o endereço nos quatro lugares acima (ou definir
    `VITE_SITE_URL` no build **e** trocar os três estáticos) — canonical, OG e sitemap precisam
@@ -1401,6 +1466,48 @@ feita, sem tocar no banco que está no ar.
 - `admin@igrejaconecta.app` (SuperAdmin, MFA) → `/app/onboarding`: "A sua conta é a direção da
   plataforma" com **Ir para aprovações**, sem formulário;
 - console sem erro nem aviso.
+
+## Dois bloqueios reais achados no ar (2026-11-13)
+
+O fluxo completo foi testado em produção com uma segunda conta (`/cadastro` → onboarding → MFA →
+aprovação do SuperAdmin → evento publicado → campanha). Dois bloqueios apareceram, os dois com
+mensagem de RLS idêntica (`403 / 42501 "new row violates row-level security policy for table …"`) e
+causas completamente diferentes.
+
+### 1. Código: `return=representation` no insert de `churches`
+
+`.insert(…).select(…)` no supabase-js manda o header `Prefer: return=representation`, que vira
+`INSERT … RETURNING`. O PostgreSQL avalia o `RETURNING` **antes** dos triggers `AFTER ROW`, então a
+linha nova é checada contra `churches_public_read` num instante em que `trg_churches_creator_admin`
+(0006) ainda não criou o vínculo — e `current_church_ids()` ainda não inclui a igreja. Resultado:
+`42501` mesmo com o insert correto e o `WITH CHECK` de `churches_insert` satisfeito.
+
+`createChurch` agora insere **sem** representação e relê pelo slug em seguida, já com o vínculo
+ativo. A distinção só é visível pelo header: `return=minimal` devolve `201`.
+
+`events` **não** precisa disso — quem cria o evento já é membro da igreja, então a linha nova passa
+em `events_church_read` no próprio `RETURNING`.
+
+Testes: `tests/unit/churchOnboardingReal.test.ts` (5 casos no caminho real, com cliente falso).
+
+### 2. Dados: seed nunca aplicado
+
+Ver [Seed obrigatório](#seed-obrigatório-papéis-permissões-e-matriz-rbac). Este é o que custa mais
+diagnóstico, porque o `42501` aponta para o código enquanto a causa é uma tabela vazia.
+
+### O que foi confirmado no provedor, não por relato
+
+| Etapa | Evidência |
+|-------|-----------|
+| Onboarding | `POST /rest/v1/churches` → `201`; igreja `40fd16b3-…` slug `igreja-piloto-teste-de-onboarding` |
+| Papel do criador | vínculo `church_admin` / `active` criado pelo trigger 0006 |
+| MFA | token com `aal: 2` e `amr: ["totp","password"]` |
+| Aprovação | `approval_status: approved`; trilha `igreja.aprovada` com ator `4a2b1bee-…`, metadata `{de: pending, para: approved}` e o mesmo timestamp do update (trigger 0009) |
+| Evento | `201` rascunho → `published`; `/eventos/<slug>` responde `200` para anônimo |
+| Campanha | `201`, `status: draft`; `marketing_campaigns` para anônimo → `401` (RLS correta) |
+
+`created_by` da campanha é `null` por decisão documentada em `0014_marketing_campaigns.sql:37` — a
+coluna existe para trilha futura e o serviço não a projeta.
 
 ## Testes de RLS e isolamento entre igrejas
 
@@ -1629,8 +1736,9 @@ restrito a `src/services/supabase/client.ts` com a anon key, e nenhuma credencia
 
 ## Próximos passos
 
-1. Repetir a suíte de isolamento no projeto Supabase real (`npm run test:rls` já cobre o local)
-   assim que as migrações 0001→0012 forem aplicadas lá.
+1. Repetir a suíte de isolamento no projeto Supabase real (`npm run test:rls` já cobre o local). As
+   migrações 0001→0014 e o `seed.sql` **já foram aplicados** lá (`dlucvyjxidrfyjwuouvp`); falta só rodar
+   a suíte contra o projeto real.
 2. Trocar mocks por consultas via `supabase` tela a tela. **Feito: roster e convites/Usuários
    (Fase 2, passos 1 e 2) — leitura e escrita —, as listas de igrejas (passo 3) — leitura —, a
    aprovação do SuperAdmin (passo 4) — escrita —, sua auditoria (passo 5) — escrita e leitura —,
@@ -1684,8 +1792,13 @@ restrito a `src/services/supabase/client.ts` com a anon key, e nenhuma credencia
    `superadmin` e com projeção congelada.
 10. Fase 9 (SEO, PWA, publicação) está **no ar**: https://igrejaconecta.vercel.app, com o Supabase
     real e o endereço canônico coerente nos quatro lugares (`site.ts`, `index.html`, `robots.txt`,
-    `sitemap.xml`) desde 2026-11-12. O que continua em aberto: um **domínio próprio** (trocar o
+    `sitemap.xml`) desde 2026-11-12. O fluxo ponta a ponta (cadastro → onboarding → MFA → aprovação →
+    evento publicado → campanha) foi validado no ar em 2026-11-13, depois de dois bloqueios corrigidos
+    — ver [Dois bloqueios reais achados no ar](#dois-bloqueios-reais-achados-no-ar-2026-11-13). O que
+    continua em aberto: um **domínio próprio** (trocar o
     endereço nos quatro lugares quando existir) e duas evoluções honestas como limites hoje — um
     **gerador de sitemap dinâmico** no build/servidor (para listar `/eventos/:slug` e `/igrejas/:slug`
     consultando o banco) e **OG por página via prerender/SSR** (para o cartão de rede por rota, que
     hoje é site-level). Nada disso é fingido como existente.
+11. Rotação da chave `sb_secret_` antiga no painel do Supabase (ela nunca foi ao frontend nem ao
+    Vercel, mas vale trocar por higiene).
