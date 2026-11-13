@@ -1509,6 +1509,13 @@ diagnóstico, porque o `42501` aponta para o código enquanto a causa é uma tab
 `created_by` da campanha é `null` por decisão documentada em `0014_marketing_campaigns.sql:37` — a
 coluna existe para trilha futura e o serviço não a projeta.
 
+**Esses dados de teste não existem mais no banco.** Em 2026-11-13 a igreja `40fd16b3-…`, o evento, a
+campanha, o vínculo e a conta de teste foram apagados (cascata + `delete from auth.users`). Sobraram a
+igreja `9cb79cc7-…` (Administração IgrejaConecta), o SuperAdmin `4a2b1bee-…` e a trilha
+`igreja.aprovada`, que ficou com `church_id` nulo porque a FK é `on delete set null` — a auditoria
+nunca é apagada junto com a igreja. Quem procurar a igreja do piloto não vai encontrar; a evidência
+acima é a tabela, não o banco.
+
 ## Testes de RLS e isolamento entre igrejas
 
 **827 declarações (grupos A–P)** em `supabase/tests/database/rls_isolation.sql`, executados contra
