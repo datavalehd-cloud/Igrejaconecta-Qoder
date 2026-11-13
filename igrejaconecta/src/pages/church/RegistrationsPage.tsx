@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Download, RefreshCw, ScanLine, UserX, TicketCheck } from 'lucide-react'
+import { AlertTriangle, Download, RefreshCw, ScanLine, UserX, TicketCheck } from 'lucide-react'
 import { PageHeader, Button, Select, EmptyState } from '@/components/common/primitives'
 import { Notice } from '@/components/common/Notice'
 import { DataTable, type Column } from '@/components/common/DataTable'
@@ -10,6 +10,7 @@ import { useChurchEvents } from '@/hooks/useEvents'
 import { usePermissions } from '@/hooks/usePermissions'
 import { cancelRegistration, checkInRegistration } from '@/services/data/registrationService'
 import { formatDate } from '@/utils/format'
+import { waitlistAdmission } from '@/utils/checkInPolicy'
 import type { Registration } from '@/types'
 
 /**
@@ -18,6 +19,9 @@ import type { Registration } from '@/types'
  * o código do ingresso, e ela só existe para quem tem `registrations.manage`
  * (RLS). O filtro de evento é recorte de tela: sem ele a RLS já limitaria às
  * linhas da própria igreja.
+ *
+ * O check-in daqui obedece à mesma regra do balcão: quem está na lista de espera
+ * só entra com um clique explícito, porque o banco promoveria a linha sozinha.
  */
 export function RegistrationsPage() {
   const { rows, loading, error, reload, allowed } = useChurchRegistrations()
@@ -26,6 +30,7 @@ export function RegistrationsPage() {
   const [eventId, setEventId] = useState('all')
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [awaiting, setAwaiting] = useState<{ registration: Registration; text: string } | null>(null)
 
   const filtered = useMemo(
     () => (eventId === 'all' ? rows : rows.filter((r) => r.event_id === eventId)),
@@ -45,7 +50,7 @@ export function RegistrationsPage() {
     )
   }
 
-  async function run(action: 'check-in' | 'cancel', registration: Registration) {
+  async function commit(action: 'check-in' | 'cancel', registration: Registration) {
     setBusy(registration.id)
     const result = action === 'check-in'
       ? await checkInRegistration(registration.id, role)
@@ -56,6 +61,24 @@ export function RegistrationsPage() {
       text: result.error ?? (action === 'check-in' ? 'Check-in registrado.' : 'Inscrição cancelada.'),
     })
     reload()
+  }
+
+  async function run(action: 'check-in' | 'cancel', registration: Registration) {
+    if (action === 'check-in') {
+      const gate = waitlistAdmission(registration)
+      if (gate.needsConfirmation) {
+        setAwaiting({ registration, text: gate.text })
+        return
+      }
+    }
+    await commit(action, registration)
+  }
+
+  async function confirmQueue() {
+    if (!awaiting) return
+    const target = awaiting.registration
+    setAwaiting(null)
+    await commit('check-in', target)
   }
 
   /** CSV gerado a partir do que a RLS devolveu — nunca de um mock paralelo. */
@@ -147,6 +170,21 @@ export function RegistrationsPage() {
         <div className="mb-4 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           <span>{error}</span>
           <Button variant="outline" size="sm" icon={<RefreshCw className="h-4 w-4" />} onClick={reload}>Tentar de novo</Button>
+        </div>
+      )}
+
+      {awaiting && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+            <p className="text-sm text-amber-800">{awaiting.text}</p>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button size="sm" onClick={confirmQueue} icon={<TicketCheck className="h-4 w-4" />}>
+              Confirmar admissão de {awaiting.registration.visitor_name}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setAwaiting(null)}>Deixar na fila</Button>
+          </div>
         </div>
       )}
 

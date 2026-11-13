@@ -19,7 +19,8 @@ import {
   fetchRegistrationStats,
   registerForEvent,
 } from '@/services/data/registrationService'
-import type { Registration } from '@/types'
+import { queueText, waitlistAdmission } from '@/utils/checkInPolicy'
+import type { Registration, RegistrationStats } from '@/types'
 
 /**
  * Inscrições têm duas metades, como eventos: a 0012 (com o grupo N da suíte SQL)
@@ -596,5 +597,105 @@ describe('tela de check-in — o Resumo lê duas fontes e recarrega as duas', ()
     expect(keyedListSource).toMatch(/\n    reload,\n  \}/)
     // sonda anti-no-op: sem o tick, o effect não tem por que rodar de novo
     expect(keyedListSource).toMatch(/\[enabled, key, fetcher, fallbackError\]/)
+  })
+
+  it('não sobra recarga de lista sozinha, nem no "Tentar de novo"', () => {
+    // o botão de erro recarregava só a lista: o painel continuava com a view
+    // antiga e o "Presentes %" subia sozinho
+    expect(pageSource, 'todo caminho de recarga tem de sair do reloadAll').not.toMatch(/onClick=\{reload\}/)
+    expect(pageSource).toMatch(/onClick=\{reloadAll\}/)
+    expect(pageSource).toMatch(/function reloadAll\(\) \{[\s\S]*?reload\(\)[\s\S]*?reloadStats\(\)/)
+    expect((pageSource.match(/(?<![A-Za-z0-9_.])reload\(\)/g) ?? []).length, 'um único ponto recarrega a lista').toBe(1)
+  })
+})
+
+describe('lista de espera no balcão — a confirmação vem antes da RPC', () => {
+  /**
+   * `check_in_registration` (0012) promove qualquer linha não cancelada, inclusive
+   * a da fila, e não tem trava de capacidade: um Enter no código de quem estava na
+   * fila já marcou presença. A decisão é do balcão, então o freio mora na tela — e
+   * as duas telas que fazem check-in freiam igual.
+   */
+  const checkInSource = readFileSync(
+    path.resolve(import.meta.dirname, '../../src/pages/church/CheckInPage.tsx'),
+    'utf8',
+  )
+  const listSource = readFileSync(
+    path.resolve(import.meta.dirname, '../../src/pages/church/RegistrationsPage.tsx'),
+    'utf8',
+  )
+
+  /** O corpo de uma função do componente, até o `}` que fecha no mesmo recuo. */
+  function corpoDe(source: string, nome: string): string {
+    const inicio = source.indexOf(`function ${nome}(`)
+    expect(inicio, `a tela não tem mais a função ${nome}`).toBeGreaterThan(-1)
+    const resto = source.slice(inicio)
+    const fim = resto.search(/\r?\n {2}\}\r?\n/)
+    expect(fim, `não achei o fim do corpo de ${nome}`).toBeGreaterThan(-1)
+    return resto.slice(0, fim)
+  }
+
+  const statsBase: RegistrationStats = {
+    event_id: 'e1',
+    church_id: 'ch1',
+    capacity: 2,
+    pending_count: 0,
+    confirmed_count: 0,
+    waitlist_count: 1,
+    checked_in_count: 1,
+    cancelled_count: 0,
+    active_count: 1,
+    spots_left: 0,
+  }
+
+  it('só a fila precisa de confirmação; os demais estados vão direto', () => {
+    expect(waitlistAdmission({ status: 'waitlist', visitor_name: 'Edison Prado' }).needsConfirmation).toBe(true)
+    for (const status of ['pending', 'confirmed', 'checked_in', 'cancelled'] as const) {
+      expect(
+        waitlistAdmission({ status, visitor_name: 'Edison Prado' }),
+        `${status} não é lista de espera e não pode travar o balcão`,
+      ).toEqual({ needsConfirmation: false, text: '' })
+    }
+  })
+
+  it('o aviso diz quem é a pessoa e não inventa lotação', () => {
+    const semContagem = waitlistAdmission({ status: 'waitlist', visitor_name: 'Edison Prado' }).text
+    expect(semContagem).toContain('Edison Prado')
+    expect(semContagem).toContain('lista de espera')
+    expect(semContagem).toContain('vaga garantida')
+    expect(semContagem).not.toMatch(/\d+ de \d+/)
+
+    expect(queueText('Edison Prado', statsBase)).toContain('1 de 2 lugares já foram marcados')
+    expect(queueText('Edison Prado', { ...statsBase, capacity: null })).toContain('não tem capacidade definida')
+  })
+
+  it('a tela de check-in chama a RPC só depois do clique de confirmar', () => {
+    const gate = corpoDe(checkInSource, 'handleCheck')
+    expect(gate).toMatch(/const gate = waitlistAdmission\(target, stats\)/)
+    expect(gate).toMatch(/if \(gate\.needsConfirmation\)[\s\S]*?setAwaiting\([\s\S]*?return/)
+    expect(gate, 'o Enter não pode alcançar a RPC direto').not.toContain('checkInRegistration(')
+    expect(corpoDe(checkInSource, 'commit')).toContain('checkInRegistration(target.id, role)')
+    expect(corpoDe(checkInSource, 'confirmQueue')).toMatch(/setAwaiting\(null\)[\s\S]*await commit\(target\)/)
+    expect(checkInSource).toContain('Deixar na fila')
+    expect(checkInSource.match(/checkInRegistration\(/g) ?? []).toHaveLength(1)
+  })
+
+  it('a lista de inscrições freia do mesmo jeito', () => {
+    const gate = corpoDe(listSource, 'run')
+    expect(gate).toMatch(/const gate = waitlistAdmission\(registration\)/)
+    expect(gate).toMatch(/if \(gate\.needsConfirmation\)[\s\S]*?setAwaiting\([\s\S]*?return/)
+    expect(gate, 'o botão da linha não pode alcançar a RPC direto').not.toContain('checkInRegistration(')
+    expect(corpoDe(listSource, 'commit')).toContain('checkInRegistration(registration.id, role)')
+    expect(listSource).toContain('Deixar na fila')
+    expect(listSource.match(/checkInRegistration\(/g) ?? []).toHaveLength(1)
+  })
+
+  it('o SQL de verdade continua sem trava: quem freia é a tela', () => {
+    const inicio = migration.indexOf('create or replace function public.check_in_registration')
+    expect(inicio, 'sumiu a RPC de check-in da 0012').toBeGreaterThan(-1)
+    const corpo = migration.slice(inicio, migration.indexOf('\n$$;', inicio))
+    expect(corpo).toContain("if reg.status = 'cancelled' then")
+    expect(corpo).toMatch(/set status = 'checked_in', checked_in_at = now\(\)/)
+    expect(corpo.toLowerCase()).not.toContain('capacity')
   })
 })

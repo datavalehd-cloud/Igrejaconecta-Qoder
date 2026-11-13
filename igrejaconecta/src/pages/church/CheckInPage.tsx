@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react'
-import { RefreshCw, ScanLine, TicketCheck, QrCode } from 'lucide-react'
+import { AlertTriangle, RefreshCw, ScanLine, TicketCheck, QrCode } from 'lucide-react'
 import { PageHeader, Card, CardHeader, CardBody, Button, Input, Badge, Select, EmptyState } from '@/components/common/primitives'
 import { Notice } from '@/components/common/Notice'
 import { useChurchEvents } from '@/hooks/useEvents'
 import { useChurchRegistrations, useRegistrationStats } from '@/hooks/useRegistrations'
 import { usePermissions } from '@/hooks/usePermissions'
 import { checkInRegistration } from '@/services/data/registrationService'
+import { waitlistAdmission } from '@/utils/checkInPolicy'
+import type { Registration } from '@/types'
 
 /**
  * Check-in do dia do evento (Fase 3, passo 2). Não há leitor de câmera nem
@@ -13,6 +15,10 @@ import { checkInRegistration } from '@/services/data/registrationService'
  * não existe. O que existe: o código do ingresso (o mesmo da lista de
  * inscrições) digitado ou lido por um scanner USB, que digita e dá Enter, e o
  * registro gravado por `check_in_registration`.
+ *
+ * Quem está na lista de espera não tem vaga garantida e o banco mesmo assim
+ * promoveria a inscrição no primeiro Enter: a tela trava esse caso atrás de uma
+ * confirmação explícita (ver `utils/checkInPolicy`).
  */
 export function CheckInPage() {
   const { rows: churchEvents } = useChurchEvents()
@@ -24,6 +30,7 @@ export function CheckInPage() {
   const [code, setCode] = useState('')
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
   const [log, setLog] = useState<string[]>([])
+  const [awaiting, setAwaiting] = useState<{ registration: Registration; text: string } | null>(null)
 
   const selectedEvent = eventId || churchEvents[0]?.id || ''
   const eventRegs = useMemo(
@@ -48,7 +55,26 @@ export function CheckInPage() {
     )
   }
 
+  // Os dois caminhos que mexem no painel — a gravação do check-in e o "Tentar de
+  // novo" da lista quebrada — refazem as duas fontes juntos: 'Check-in feito' vem
+  // da view e 'Presentes' da lista, e recarregar só a lista deixa 0 ao lado de 67%.
+  function reloadAll() {
+    reload()
+    reloadStats()
+  }
+
+  async function commit(target: Registration) {
+    const result = await checkInRegistration(target.id, role)
+    setNotice({ tone: result.ok ? 'ok' : 'error', text: result.error ?? `Check-in de ${target.visitor_name} registrado.` })
+    if (result.ok) {
+      setLog((l) => [`${new Date().toLocaleTimeString('pt-BR')} — ${target.visitor_name} (${target.ticket_code})`, ...l].slice(0, 8))
+    }
+    setCode('')
+    reloadAll()
+  }
+
   async function handleCheck() {
+    if (awaiting) return
     const typed = code.trim().toUpperCase()
     if (!typed) return
     const normalized = typed.replace(/[^A-Z0-9]/g, '')
@@ -61,16 +87,24 @@ export function CheckInPage() {
       return
     }
 
-    const result = await checkInRegistration(target.id, role)
-    setNotice({ tone: result.ok ? 'ok' : 'error', text: result.error ?? `Check-in de ${target.visitor_name} registrado.` })
-    if (result.ok) {
-      setLog((l) => [`${new Date().toLocaleTimeString('pt-BR')} — ${target.visitor_name} (${target.ticket_code})`, ...l].slice(0, 8))
+    const gate = waitlistAdmission(target, stats)
+    if (gate.needsConfirmation) {
+      setAwaiting({ registration: target, text: gate.text })
+      return
     }
+    await commit(target)
+  }
+
+  async function confirmQueue() {
+    if (!awaiting) return
+    const target = awaiting.registration
+    setAwaiting(null)
+    await commit(target)
+  }
+
+  function leaveInQueue() {
+    setAwaiting(null)
     setCode('')
-    // As duas fontes do painel vão juntas: 'Check-in feito' vem da view e
-    // 'Presentes' da lista — recarregar só a lista deixa 0 ao lado de 67%.
-    reload()
-    reloadStats()
   }
 
   return (
@@ -82,7 +116,7 @@ export function CheckInPage() {
       {error && (
         <div className="mb-4 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           <span>{error}</span>
-          <Button variant="outline" size="sm" icon={<RefreshCw className="h-4 w-4" />} onClick={reload}>Tentar de novo</Button>
+          <Button variant="outline" size="sm" icon={<RefreshCw className="h-4 w-4" />} onClick={reloadAll}>Tentar de novo</Button>
         </div>
       )}
 
@@ -104,12 +138,27 @@ export function CheckInPage() {
                 <Input
                   placeholder="Digite ou bipe o código (ex.: A2F-9C3)"
                   value={code}
-                  onChange={(e) => setCode(e.target.value)}
+                  onChange={(e) => { setCode(e.target.value); setAwaiting(null) }}
                   onKeyDown={(e) => e.key === 'Enter' && handleCheck()}
                   aria-label="Código do ingresso"
                 />
-                <Button onClick={handleCheck} disabled={!code.trim()} icon={<ScanLine className="h-4 w-4" />}>Registrar</Button>
+                <Button onClick={handleCheck} disabled={!code.trim() || Boolean(awaiting)} icon={<ScanLine className="h-4 w-4" />}>Registrar</Button>
               </div>
+
+              {awaiting && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+                    <p className="text-sm text-amber-800">{awaiting.text}</p>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button size="sm" onClick={confirmQueue} icon={<TicketCheck className="h-4 w-4" />}>
+                      Confirmar admissão de {awaiting.registration.visitor_name}
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={leaveInQueue}>Deixar na fila</Button>
+                  </div>
+                </div>
+              )}
 
               {log.length > 0 && (
                 <div className="rounded-lg bg-navy p-3 font-mono text-xs text-green">

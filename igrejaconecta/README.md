@@ -1602,9 +1602,16 @@ Bundle servido na aba: `assets/index-rZHaPKHG.js`, o mesmo arquivo do build loca
 a conferência não rodou em versão antiga. Console: zero mensagens. Apagado o vínculo temporário, a
 mesma sessão voltou a cair em `403 /acesso-negado`, como antes de ele existir.
 
-Fica aberto, e o teste não pega de propósito: o botão **Tentar de novo** da tela de erro
-(`CheckInPage.tsx:85`) repete só a lista, porque `onClick={reload}` é referência e não chamada. Numa
-recarga depois de falha de rede isso pode deixar o painel uma batida atrasado; não é o fluxo medido.
+Ficava aberto, e o teste de pareamento não pegava de propósito: o botão **Tentar de novo** da tela de
+erro repitava só a lista, porque `onClick={reload}` é referência, não chamada — numa recarga depois de
+falha de rede o painel podia ficar uma batida atrasado. **Fechado (2026-11-13):** os dois caminhos que
+mexem no painel agora saem de um `reloadAll()` só (`src/pages/church/CheckInPage.tsx:61`), e o caso
+"não sobra recarga de lista sozinha, nem no 'Tentar de novo'" não deixa mais nenhum `onClick={reload}`
+solto na tela. Duas mutações conferidas, cada uma revertida em seguida: botar o botão de volta em
+`onClick={reload}` derruba esse caso novo; tirar `reloadStats()` de dentro do `reloadAll()` derruba ele
+e o pareamento antigo. Não medido ao vivo de propósito: a tela de erro só aparece quando o `fetch` da
+lista falha, e nem o modo demo nem o projeto real estavam em falha de rede — o mecanismo do `reloadStats`
+(recarregar a view sem recarregar a página) é o mesmo que já foi medido no ar acima.
 
 ### Fixture no SQL Editor do projeto real (o procedimento)
 
@@ -1628,6 +1635,59 @@ consulta de estado **antes** e **depois**; limpeza com guardas por id **e** slug
 e-mail, para não apagar linha parecida; e estado final conferido por leitura. O desta medição
 terminou em `eventos 0 | inscrições 0 | vínculos 1 | contas 2 | auditoria 6`, roster só
 `datavalehd@gmail.com / superadmin` — nada dos testes ficou no banco.
+
+## Lista de espera no balcão: avisar e confirmar (2026-11-13)
+
+A medição acima deixou a pergunta: `check_in_registration` promove ao ver qualquer estado diferente de
+`cancelled` — inclusive `waitlist` — e não tem trava de nenhuma dentro da função. Na prática um Enter no
+código de quem estava na fila já marcava presença, e a pessoa entrava sem que a vaga tivesse existido.
+O caminho inverso (travar no banco) foi descartado: a RPC continuaria permissiva para os outros
+consumidores e a régua de "quem pode furar a fila" é do balcão, não do SQL.
+
+**Decidido: avisar e confirmar, na tela, nas duas telas que fazem check-in. Zero migração.**
+
+| Caminho | Antes | Agora |
+|---|---|---|
+| `/app/checkin`, código digitado ou bipado | `Enter` → RPC, e a fila promovia em silêncio | o código é reconhecido, a tela mostra o nome, diz que não havia vaga garantida e quantos lugares já foram marcados; nada é gravado até **Confirmar admissão de \<nome\>** |
+| `/app/inscricoes`, botão da linha | um clique → RPC | o primeiro clique arma o aviso âmbar; gravar exige o botão de confirmar |
+| `pending`, `confirmed`, `checked_in`, `cancelled` | RPC | RPC direto — a tela não trava quem tinha vaga, e o cancelado/já-presente continuam respondidos pelo banco |
+
+As peças:
+
+- `src/utils/checkInPolicy.ts` — `waitlistAdmission(reg, stats)` é o único lugar que sabe o que é fila e
+  como se fala disso. Sem `stats` o aviso sai sem números; ele nunca chuta lotação.
+- `CheckInPage.tsx` — separou a decisão da escrita: `handleCheck` (linha 85 faz o gate) escolhe,
+  `commit` (58) grava. Enquanto o aviso está na tela o `Enter` é ignorado e "Registrar" fica desabilitado,
+  então um scanner que manda o código duas vezes não se confirma sozinho. Digitar qualquer coisa no campo
+  derruba o aviso pendente.
+- `RegistrationsPage.tsx` — `run` (linha 68) passa pelo mesmo gate antes de chamar `commit` (53).
+
+Revisão de risco — é política de escrita, não de audiência; nenhum dado novo é lido:
+
+| Risco | Como fica |
+|---|---|
+| alguém confirmar sem ler | o botão repete o nome da pessoa e o aviso diz a consequência ("marca a presença e tira a pessoa da fila"); é um clique a mais, dado por quem já tem `registrations.manage` |
+| a tela virar a única guarda do país das vagas | é a escolha feita, e por isso o caminho novo de check-in tem de obedecer ao `waitlistAdmission` — os testes amarram as duas telas existentes e a ausência de trava no SQL |
+| travar quem tem vaga | impossível por estado: só `waitlist` arma o aviso |
+| dado pessoal no aviso | o nome já está na lista, na mesma tela, para o mesmo papel |
+
+Prova por mutação — quebrar o gate e ver o teste cair, cada mutação revertida em seguida:
+
+| Mutação | Teste que caiu |
+|---|---|
+| `if (gate.needsConfirmation)` neutralizado na tela de check-in | "a tela de check-in chama a RPC só depois do clique de confirmar" |
+| `return` do gate apagado dentro de `run` na lista de inscrições | "a lista de inscrições freia do mesmo jeito" |
+| `status !== 'waitlist'` invertido na função pura | "só a fila precisa de confirmação" e "o aviso diz quem é a pessoa e não inventa lotação" |
+
+Medido no browser em **modo demo** — `.env.demo.local` com `VITE_SUPABASE_URL`/`_ANON_KEY` vazios,
+`npx vite --mode demo --port 5199`, arquivo apagado depois. Nenhuma escrita no projeto real, e nenhum
+fixture novo: logado como `ana@ibcentral.org.br` (gerente), o botão de check-in da linha
+**Beatriz Lopes** (`waitlist`) abriu o aviso *"Beatriz Lopes está na lista de espera: não tinha vaga
+garantida quando se inscreveu. Confirmar a admissão marca a presença e tira a pessoa da fila."* com
+**Confirmar admissão de Beatriz Lopes** / **Deixar na fila**. "Deixar na fila" fechou o bloco e a linha
+continuou **Lista de espera**; rearmado, o clique em confirmar passou a linha para **Check-in feito**.
+Console limpo. O `/app/checkin` não foi medido ao vivo aqui porque as inscrições mockadas não têm
+`ticket_code` nenhum — a tela de código está coberta pelos testes de fonte acima.
 
 ## Testes de RLS e isolamento entre igrejas
 
@@ -1846,7 +1906,7 @@ restrito a `src/services/supabase/client.ts` com a anon key, e nenhuma credencia
 |------|--------|------------------------|
 | 1 | Fundação, auth, RBAC, banco, RLS | Schema + RLS prontos; telas auth em demo |
 | 2 | Igrejas, filiais, usuários, equipes, aprovação | **Onboarding de igreja pelo app** (`/app/onboarding` + `createChurch`: insert `pending` com `created_by` da sessão, criador virando `church_admin` pelo trigger 0006); usuários lendo **e escrevendo** no banco (view 0007 + convites 0008); listas de igrejas lendo o real (`churchService`) e a aprovação escrevendo o real (`churchApprovalService`, grupo J), com trilha atômica no banco e leitura de auditoria (`auditService`, grupos K e L, migração 0009); **filiais lendo e escrevendo** (0013 + `branchService`, grupo O — sem delete); equipes mockadas |
-| 3 | Eventos, calendário, inscrições, check-in, portal | Eventos **lendo e escrevendo** (0011 + `eventService`, grupo M) e inscrições **lendo e escrevendo** (0012 + `registrationService`, grupo N): criação/edição/transição de status com a porta `events.publish`, inscrição pública com lista de espera, contagem real de inscritos, lista/CSV da equipe, check-in por código e cancelamento com promoção da fila. **Filial e localização no evento gravam** (0013, M11). Falta upload de capa no Storage e o QR Code impresso |
+| 3 | Eventos, calendário, inscrições, check-in, portal | Eventos **lendo e escrevendo** (0011 + `eventService`, grupo M) e inscrições **lendo e escrevendo** (0012 + `registrationService`, grupo N): criação/edição/transição de status com a porta `events.publish`, inscrição pública com lista de espera, contagem real de inscritos, lista/CSV da equipe, check-in por código — quem está na lista de espera só entra com clique explícito — e cancelamento com promoção da fila. **Filial e localização no evento gravam** (0013, M11). Falta upload de capa no Storage e o QR Code impresso |
 | 4 | Google Maps, GPS, localização | **Mapa público real**: Leaflet + OpenStreetMap (decisão sua, sem chave), GPS do navegador **sem geocodificador**, distância por haversine, ordenação por proximidade e botão Rota. Só é plotada igreja com coordenada real; sem coordenada a lista avisa e o pino não é inventado; sem rede os tiles falham com aviso honesto. Coordenadas também são digitáveis nos formulários de igreja, filial e evento |
 | 5 | Divulgação social (Meta/TikTok/WhatsApp) | Campanhas **lendo e escrevendo** no banco (0014 + `marketingService`, grupo P) com RLS por `marketing.manage` e o trigger que **só deixa `service_role` publicar** — o botão Publicar devolve aviso honesto e não marca nada. Distribuição **sem chave** real (WhatsApp/wa.me, copiar link com UTM, Web Share) no painel e na página pública do evento. `/app/redes` mostra todas as contas como **Não conectado**, sem botão de conectar de mentira. Postagem real em rede fica de fora (exige OAuth + backend com tokens) |
 | 6 | IgrejaConecta AI | **Gerador de texto de campanha local** (`utils/campaignText.ts`, sem IA e sem chave): monta nome, mensagem e hashtags com os dados reais do evento, roda no navegador e salva como rascunho pela mesma porta `marketing.manage` + RLS da 0014. Ligado ao formulário de campanha (**Gerar sugestão**) e à página `/app/ia` (**Gerar texto** + **Criar rascunho**). Artes, vídeos e IA de provedor seguem **Não conectado** — exigem backend que guarde `OPENAI_API_KEY` (a chave nunca vai ao frontend); nada é fingido |
@@ -1884,8 +1944,11 @@ restrito a `src/services/supabase/client.ts` com a anon key, e nenhuma credencia
    QR; hoje o check-in é pelo código digitado ou bipado) e o **upload da capa para o Storage** (hoje é
    URL colada). Filial e latitude/longitude no evento foram entregues na Fase 4, e a leitura global de
    eventos no painel do SuperAdmin, na Fase 8. Confirmar a inscrição por e-mail/WhatsApp depende do
-   mesmo provedor real do item 3. Falta também a **decisão do balcão sobre a lista de espera** — hoje
-   o check-in promove `waitlist` sem ter consumido vaga, medido em produção e descrito em
+   mesmo provedor real do item 3. A decisão do balcão sobre a lista de espera está tomada e entregue:
+   o check-in promovia `waitlist` sem ter consumido vaga (medido em produção); hoje a tela avisa que não
+   havia vaga garantida e exige um clique explícito antes de gravar. A decisão, o risco e a prova por
+   mutação estão em [Lista de espera no balcão: avisar e confirmar](#lista-de-espera-no-balcão-avisar-e-confirmar-2026-11-13);
+   a medição que levantou a pergunta, em
    [Check-in medido no ar e o painel de duas fontes](#check-in-medido-no-ar-e-o-painel-de-duas-fontes-2026-11-13).
 6. **Decisão pendente de segurança:** sair de `published` (voltar a rascunho ou cancelar) exige hoje só
    `events.manage` — é o que a 0011 faz, e o app reproduz. Se tirar um evento do ar deve exigir
