@@ -558,3 +558,43 @@ describe('loja demo — espelha o grupo N', () => {
     expect(row.created_at).toBeTruthy()
   })
 })
+
+describe('tela de check-in — o Resumo lê duas fontes e recarrega as duas', () => {
+  /**
+   * Medido em produção (2026-11-13, sessão de gerente): depois de um check-in a
+   * tela dizia `Check-in feito 0` ao lado de `Presentes 67%`, porque 'Inscritos',
+   * 'Check-in feito' e 'Lista de espera' vêm da view `event_registration_stats`
+   * (carregada uma vez) e 'Presentes' da lista, que o `reload()` refazia. Ninguém
+   * recarrega a página no balcão.
+   */
+  const pageSource = readFileSync(
+    path.resolve(import.meta.dirname, '../../src/pages/church/CheckInPage.tsx'),
+    'utf8',
+  )
+  const hookSource = readFileSync(
+    path.resolve(import.meta.dirname, '../../src/hooks/useRegistrations.ts'),
+    'utf8',
+  )
+  const keyedListSource = readFileSync(
+    path.resolve(import.meta.dirname, '../../src/hooks/useKeyedList.ts'),
+    'utf8',
+  )
+
+  it('cada recarga da lista vem acompanhada da recarga das estatísticas', () => {
+    const recargasDeLista = pageSource.match(/(?<![A-Za-z0-9_.])reload\(\)/g) ?? []
+    expect(recargasDeLista.length).toBeGreaterThan(0)
+    expect(pageSource).toMatch(/reload: reloadStats\s*\}\s*=\s*useRegistrationStats\(\)/)
+    expect(
+      pageSource.match(/reload\(\)\s*\n\s*reloadStats\(\)/g) ?? [],
+      'recarregar a lista sem recarregar a view deixa o painel se contradizendo',
+    ).toHaveLength(recargasDeLista.length)
+  })
+
+  it('o reload das estatísticas é o refetch do hook, não um no-op', () => {
+    expect(hookSource).toMatch(/export function useRegistrationStats\(\)[\s\S]*?return \{ \.\.\.result, byEvent \}/)
+    expect(keyedListSource).toMatch(/const reload = useCallback\(\(\) => setTick\(\(t\) => t \+ 1\), \[\]\)/)
+    expect(keyedListSource).toMatch(/\n    reload,\n  \}/)
+    // sonda anti-no-op: sem o tick, o effect não tem por que rodar de novo
+    expect(keyedListSource).toMatch(/\[enabled, key, fetcher, fallbackError\]/)
+  })
+})

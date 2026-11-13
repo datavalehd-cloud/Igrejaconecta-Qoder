@@ -17,7 +17,7 @@ import { checkInRegistration } from '@/services/data/registrationService'
 export function CheckInPage() {
   const { rows: churchEvents } = useChurchEvents()
   const { rows: registrations, loading, error, reload, allowed } = useChurchRegistrations()
-  const { byEvent } = useRegistrationStats()
+  const { byEvent, reload: reloadStats } = useRegistrationStats()
   const { role } = usePermissions()
 
   const [eventId, setEventId] = useState('')
@@ -67,7 +67,10 @@ export function CheckInPage() {
       setLog((l) => [`${new Date().toLocaleTimeString('pt-BR')} — ${target.visitor_name} (${target.ticket_code})`, ...l].slice(0, 8))
     }
     setCode('')
+    // As duas fontes do painel vão juntas: 'Check-in feito' vem da view e
+    // 'Presentes' da lista — recarregar só a lista deixa 0 ao lado de 67%.
     reload()
+    reloadStats()
   }
 
   return (
