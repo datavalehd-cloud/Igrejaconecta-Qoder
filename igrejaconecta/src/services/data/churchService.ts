@@ -222,6 +222,8 @@ export type ChurchCreateResult =
 export const CHURCH_CREATE_NO_ACTOR = 'Entre na sua conta para cadastrar a igreja.'
 export const CHURCH_CREATE_INVALID_NAME = 'O nome da igreja precisa de pelo menos 3 caracteres.'
 export const CHURCH_CREATE_SLUG_TAKEN = 'Não deu para gerar um endereço único para esse nome. Tente outro nome.'
+export const CHURCH_CREATE_DENIED = 'Esta conta não pode cadastrar igreja: a política exige que o criador seja você e que a igreja entre como pendente.'
+export const CHURCH_CREATE_NOT_READABLE = 'A igreja foi cadastrada, mas não voltou na leitura. Atualize o painel.'
 
 /** Projeção devolvida a quem acabou de criar: o suficiente para a tela confirmar. */
 export const CREATED_COLUMNS = [
@@ -302,21 +304,34 @@ export async function createChurch(draft: ChurchDraft, creator?: ChurchCreator):
   }
 
   for (const slug of candidates) {
-    const { data, error } = await supabase
+    // Sem `.select()` aqui de propósito: o `return=representation` faz o Postgres
+    // avaliar o RETURNING antes do trigger 0006 criar o vínculo, e a linha nova
+    // ainda não passa em `churches_public_read` — o banco responde 42501 mesmo com
+    // o insert correto. Insere e relê em seguida, já com o vínculo ativo.
+    const { error } = await supabase
       .from('churches')
       .insert({ ...fields, slug, created_by: creator.id, status: 'active', approval_status: 'pending' })
-      .select(CREATED_COLUMNS.join(','))
-      .maybeSingle()
-    if (!error && data) return { ok: true, church: data as unknown as Church }
-    if (!error && !data) return { ok: false, error: 'A igreja foi cadastrada, mas não voltou na leitura. Atualize o painel.' }
     // 23505 = slug duplicado: tenta o próximo sufixo. Qualquer outro erro para.
     if (error && error.code !== '23505') return { ok: false, error: describeChurchCreateError(error) }
+    if (error) continue
+
+    const { data } = await supabase
+      .from('churches')
+      .select(CREATED_COLUMNS.join(','))
+      .eq('slug', slug)
+      .maybeSingle()
+    if (!data) return { ok: false, error: CHURCH_CREATE_NOT_READABLE }
+    return { ok: true, church: data as unknown as Church }
   }
   return { ok: false, error: CHURCH_CREATE_SLUG_TAKEN }
 }
 
 function describeChurchCreateError(error: { code?: string; message: string }): string {
-  if (error.code === '42501') return 'Esta conta não pode cadastrar igreja: a política exige que o criador seja você e que a igreja entre como pendente.'
+  if (error.code === '42501') {
+    // A frase da tela é fixa; o texto real do Postgres fica só no console.
+    console.warn('[churchService] cadastro de igreja recusado pelo banco:', error.message)
+    return CHURCH_CREATE_DENIED
+  }
   return error.message
 }
 
