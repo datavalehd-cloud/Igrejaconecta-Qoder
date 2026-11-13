@@ -1505,9 +1505,29 @@ diagnóstico, porque o `42501` aponta para o código enquanto a causa é uma tab
 | Aprovação | `approval_status: approved`; trilha `igreja.aprovada` com ator `4a2b1bee-…`, metadata `{de: pending, para: approved}` e o mesmo timestamp do update (trigger 0009) |
 | Evento | `201` rascunho → `published`; `/eventos/<slug>` responde `200` para anônimo |
 | Campanha | `201`, `status: draft`; `marketing_campaigns` para anônimo → `401` (RLS correta) |
+| Inscrição de visitante | RPC anônima `POST /rest/v1/rpc/register_for_event` → `200 "confirmed"`, depois `200 "ja_inscrita"` (mesmo e-mail, nome diferente) e `200 "waitlist"` (2º e-mail com `capacity = 1`) |
 
 `created_by` da campanha é `null` por decisão documentada em `0014_marketing_campaigns.sql:37` — a
 coluna existe para trilha futura e o serviço não a projeta.
+
+**A inscrição de visitante foi medida na página pública de produção, sem sessão no app** (localStorage
+com zero chaves), com um evento fixture de `capacity = 1`. Os três estados acima saíram do corpo
+da resposta, não do texto da tela. Na mesma rodada:
+
+- a tela mostrava `Inscritos 0 / 1` antes e `2 / 1` depois — número da view
+  `event_registration_stats`, que é agregado e não abre a tabela;
+- o botão passou de "Confirmar inscrição" a "Entrar na lista de espera" porque `spots_left` virou `0`,
+  medido pela view, não pelo estado local;
+- nome de 1 letra foi barrado **sem nenhuma chamada de rede** — a validação de `dados_invalidos` é
+  feita no cliente, antes da RPC;
+- as duas linhas gravadas tinham `user_id` nulo (visitante sem conta), `church_id` igual ao do evento
+  (derivado pelo trigger, não enviado pelo cliente), `checked_in_at` nulo e `ticket_code` no formato
+  `FA5-AF7` / `CC7-B23` — o código **não** apareceu na página, como decidido em `0012`.
+
+O fixture (`edfcf242-…`, slug `culto-de-teste-inscricao`) e as duas inscrições foram apagados depois;
+`event_registrations` voltou a zero por cascata e a URL do evento passou a renderizar
+"Evento não encontrado". Publicar o evento por SQL exigiu `set_config('request.jwt.claims', …)` com o
+sub do SuperAdmin, porque o `enforce_event_publish` da `0011` também vale para o editor.
 
 **Esses dados de teste não existem mais no banco.** Em 2026-11-13 a igreja `40fd16b3-…`, o evento, a
 campanha, o vínculo e a conta de teste foram apagados (cascata + `delete from auth.users`). Sobraram a
