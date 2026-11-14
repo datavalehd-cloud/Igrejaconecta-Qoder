@@ -6,7 +6,9 @@
 --   Projeto real (SQL Editor do Supabase):       cole este arquivo inteiro e execute.
 --   Projeto real (CLI, com o projeto linkado):   supabase db query --linked -f supabase/tests/database/rls_isolation.sql
 --
--- Pré-requisito no projeto real: migrações 0001..0020 + seed aplicadas. O arquivo
+-- Pré-requisito no projeto real: migrações 0001..0021 + seed aplicadas (o bundle
+-- supabase/deploy/m7_apply.sql é exatamente o que leva um projeto em 0014 até aqui).
+-- O arquivo
 -- supabase/tests/local/shim_supabase.sql NÃO é necessário lá (auth.* e storage.*
 -- já existem) e não deve ser executado num projeto Supabase.
 --

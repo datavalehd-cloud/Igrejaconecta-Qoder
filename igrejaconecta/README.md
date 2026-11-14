@@ -1464,7 +1464,9 @@ Ordem para ir ao ar (o passo 1 é seu — criar o projeto Supabase e colar as ch
    `service_role` **nunca** vai ao frontend nem ao Vercel. Rode `npm run test:rls` contra o projeto
    real antes de qualquer deploy (ver seção de RLS). **Feito**: projeto `dlucvyjxidrfyjwuouvp`,
    migrações 0001–0014 aplicadas e seed aplicado em 2026-11-13 (11 permissões / 6 papéis / 33 pares).
-   **0015..0021 ainda não foram aplicadas lá** — é o passo M7; sem elas as telas novas (ministérios,
+   **0015..0021 ainda não foram aplicadas lá** — é o passo M7, com arquivo pronto para colar
+   (`npm run m7:bundle` → `supabase/deploy/m7_apply.sql`; ver a seção própria); sem elas as telas novas
+   (ministérios,
    perfis de rede, favoritos, organizações, suporte, alertas) falham com `42P01` no ar. A 0020 tem
    ordem, e ela já está do lado certo: o app não oferece mais TikTok em campanha nem em perfil
    (passo M3b), então a migração sobe **no mesmo deploy** que tira a opção da tela — nunca antes, para
@@ -2142,6 +2144,68 @@ leitura (`42P01`) em vez de gravar. E `visitor_favorites` não tem como saber se
 está publicado — é decisão registrada na própria 0016, e o custo na tela é o que está escrito acima: o
 evento some da lista e é contado na nota, nunca inventado.
 
+### M7 — subir as 0015..0021 para o projeto real
+
+O banco que está no ar (`dlucvyjxidrfyjwuouvp`) tem **0001..0014 + `seed.sql`**. As sete migrações da
+rodada "sem modo demo" ainda não subiram, e é isso que hoje faz `/app/ministerios`, `/app/redes` e
+`/visitante/perfil` caírem em `42P01` no site publicado. Como aqui não há `service_role` nem conexão
+direta com o banco — e não vai haver, é a restrição da rodada —, quem cola é você, no SQL Editor. O
+arquivo que você cola é gerado, não digitado:
+
+```bash
+npm run m7:bundle   # escreve supabase/deploy/m7_apply.sql e imprime o sha256
+```
+
+[supabase/deploy/m7_apply.sql](supabase/deploy/m7_apply.sql) é a concatenação literal das sete migrações
+(com o texto byte a byte igual ao dos arquivos), cercada por três coisas que uma migração solta não tem:
+
+- **Preflight antes do `begin`**: banco, usuário, versão, quantas igrejas existem, **quantas campanhas
+  têm `tiktok`** e se alguma tabela de 0015..0021 já existe. É o que diz, antes de rodar, se o
+  `0020` vai pegar uma constraint antiga ou uma que já foi trocada.
+- **Verificação dentro da mesma transação**, antes do `commit`: os nomes de tabela, política, trigger e
+  função não são uma lista digitada à mão — o gerador os extrai dos `create` dos próprios arquivos
+  (agora: 10 tabelas, 28 políticas, 8 triggers, 6 funções) e o `do $$` exige cada um. Além disso
+  confere o que é **superfície**, não objeto: que `visitor_favorites` não ganhou `UPDATE`, que
+  `visitor_preferences` não ganhou `DELETE`, que `security_events` continua sem escrita pela API e que
+  o CHECK de campanha tem os três canais e nenhum `tiktok`. Faltou qualquer um, o `raise exception`
+  desfaz o apply inteiro e o banco continua como estava.
+- **Inventário depois do commit**: as tabelas criadas, o número de políticas por tabela, os triggers, a
+  definição real dos CHECKs e os grants de `authenticated` por tabela. É isto que se confere com os
+  números acima antes de qualquer deploy.
+
+O arquivo **não apaga dado nenhum**: não tem `drop table`, `truncate` nem `delete`. O único objeto
+existente que ele toca é o `marketing_campaigns_networks_check` (0020), que é derrubado e recriado — se
+houver campanha com `tiktok`, a recriação falha e nada é aplicado, que é a resposta correta.
+
+**Ensaio local do apply** (`tools/m7-rehearsal.mjs`, scratch): sobe um Postgres embarcado, monta o
+estado do projeto real (shim + 0001..0014 + seed) e roda o bundle **contra esse estado**. Medido:
+
+| Passo | Resultado |
+|---|---|
+| Bundle sem a 0021 (mutação) | `M7-FALHA: triggers ausentes: ministry_members.trg_ministry_members_member, ministries.trg_ministries_leader` — e `to_regclass('public.ministries')` continua `NULL`: **nada sobrou aplicado** |
+| Bundle inteiro | `M7-OK: 10 tabelas, 28 politicas, 8 triggers, 6 funcoes conferidos`, `commit` |
+| CHECK depois do 0020 | `CHECK ((networks <@ ARRAY['instagram','facebook','whatsapp']))` |
+| Suíte de RLS contra o schema recém-aplicado | **1052 declarações, grupos A–U, todos os casos passaram** |
+| Aplicar duas vezes | ok — tudo é `if not exists` / `drop … if exists` |
+| Suíte depois do próprio `rollback` | igrejas 0, profiles 0 — nenhum fixture ficou |
+
+**Prova por mutação dos guards do bundle** (`tools/mutate-m7-bundle.mjs`): 5 de 5 mortas, arquivo
+restaurado byte a byte. [tests/unit/m7Bundle.test.ts](tests/unit/m7Bundle.test.ts) é a cerca que fica no
+repositório: o bundle do disco é o que o gerador produz agora, nenhuma migração pendente ficou de fora,
+a contagem da verificação bate com a dos arquivos e não há `drop table`/`truncate`/`delete` nele.
+
+**Como rodar no real.** 1) Abra o SQL Editor no projeto e cole o `m7_apply.sql` **inteiro**; 2) execute;
+3) me traga o preflight, a linha `M7-OK`, e as saídas do inventário (ou o erro, se aparecer
+`M7-FALHA: …` — nesse caso nada foi aplicado e é só me mandar a mensagem); 4) depois, para a suíte, o
+mesmo editor com [supabase/tests/database/rls_isolation.sql](supabase/tests/database/rls_isolation.sql)
+inteiro — ela roda dentro de uma transação e termina em `rollback`, então não deixa usuário, igreja nem
+objeto de teste no banco. O `shim_supabase.sql` **não** entra nessa conversa: ele existe só para o
+Postgres embarcado local, e num projeto Supabase os schemas `auth.*`/`storage.*` já vêm do provedor.
+
+**Depois do apply, o que muda no ar:** as telas novas deixam de falhar em `42P01`. Isso não é publicar —
+o bundle é banco, não bundle de navegador; o site continua o `index-l6tyeyZ3.js` de antes até um deploy
+que você autorizar.
+
 ## Testes de RLS e isolamento entre igrejas
 
 **1052 declarações (grupos A–U)** em `supabase/tests/database/rls_isolation.sql`, executados contra
@@ -2374,11 +2438,14 @@ restrito a `src/services/supabase/client.ts` com a anon key, e nenhuma credencia
 
 ## Próximos passos
 
-1. Repetir a suíte de isolamento no projeto Supabase real (`npm run test:rls` já cobre o local). As
-   migrações 0001→0014 e o `seed.sql` **já foram aplicados** lá (`dlucvyjxidrfyjwuouvp`); faltam as
-   0015..0021 — sem elas os grupos Q..U não têm o que medir e as telas novas falham com `42P01` no ar.
-   A 0020 (TikTok fora do CHECK) sobe nesse mesmo deploy: o app já não oferece a rede em lugar nenhum,
-   então banco e tela entram concordando. Depois disso é só rodar a suíte contra o projeto real.
+1. Subir as migrações 0015..0021 ao projeto Supabase real (`dlucvyjxidrfyjwuouvp`, onde já estão
+   0001→0014 + `seed.sql`) colando `supabase/deploy/m7_apply.sql` no SQL Editor — o arquivo é gerado por
+   `npm run m7:bundle`, verifica a própria aplicação dentro da transação e desfaz tudo se faltar objeto
+   (seção [M7](#m7--subir-as-00150021-para-o-projeto-real)). Sem elas os grupos Q..U da suíte não têm o
+   que medir no real e as telas novas falham com `42P01` no ar; a 0020 (TikTok fora do CHECK) sobe junto,
+   então banco e tela entram concordando. **Depois do apply:** rodar a suíte no real (o mesmo editor com
+   `rls_isolation.sql`, que termina em `rollback` e não deixa fixture) e medir no browser o que hoje só
+   está provado local — `/app/ministerios`, `/app/redes`, `/visitante/perfil` e o coração gravando.
 2. Trocar mocks por consultas via `supabase` tela a tela. **Feito: roster e convites/Usuários
    (Fase 2, passos 1 e 2) — leitura e escrita —, as listas de igrejas (passo 3) — leitura —, a
    aprovação do SuperAdmin (passo 4) — escrita —, sua auditoria (passo 5) — escrita e leitura —,

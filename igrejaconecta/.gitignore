@@ -28,3 +28,6 @@ dist-ssr
 
 # Postgres embarcado usado por npm run test:rls
 .rls-data/
+
+# Estado local do CLI do Supabase (criado ao subir o Postgres embarcado)
+supabase/.temp

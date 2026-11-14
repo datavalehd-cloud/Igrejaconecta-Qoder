@@ -3,8 +3,8 @@
 --
 -- Até aqui as duas telas (`/app/ministerios` e `/app/marketing/contas`) liam
 -- `src/data/mock.ts`: nome, líder e contagem de participantes inventados, sem
--- banco nenhum. Esta migração dá origem real aos dois dados e mantém, no
---_storage_, a mesma honestidade que a tela já tinha: **conectado só com
+-- banco nenhum. Esta migração dá origem real aos dois dados e mantém, no banco,
+-- a mesma honestidade que a tela já tinha: **conectado só com
 -- confirmação do provedor**.
 --
 -- Decisões, e o porquê:
