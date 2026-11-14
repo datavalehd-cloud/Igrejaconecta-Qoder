@@ -10,7 +10,7 @@ const features = [
   { icon: CalendarDays, title: 'Eventos organizados', text: 'Cadastre cultos, congressos e ações sociais com inscrições e check-in.' },
   { icon: MapPin, title: 'Encontre igrejas', text: 'Mapa com igrejas próximas, rotas e horários dos cultos.' },
   { icon: Sparkles, title: 'IgrejaConecta AI', text: 'Gere textos, artes, vídeos e campanhas completas em segundos.' },
-  { icon: Share2, title: 'Divulgação automática', text: 'Publique em Instagram, Facebook, TikTok e WhatsApp.' },
+  { icon: Share2, title: 'Divulgação sem dependência', text: 'Texto pronto, link de WhatsApp e compartilhamento nativo para divulgar cada evento.' },
 ]
 
 export function HomePage() {

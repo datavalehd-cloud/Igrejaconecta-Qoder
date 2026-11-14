@@ -1,10 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { demoAccounts, type DemoAccount } from '@/services/auth/authService'
-import { createDemoBackend } from '@/services/auth/demoBackend'
 import { createSupabaseBackend } from '@/services/auth/supabaseBackend'
 import type { AuthBackend, LoginResult, MfaEnrollment, RegisterResult, Session, SimpleResult } from '@/services/auth/authTypes'
-import { isSupabaseConfigured } from '@/services/supabase/client'
 
 export type { Session } from '@/services/auth/authTypes'
 
@@ -14,24 +11,26 @@ interface AuthContextValue {
   /** true enquanto a sessão inicial está sendo restaurada. */
   initializing: boolean
   isAuthenticated: boolean
-  mode: 'demo' | 'supabase'
   login: (email: string, password: string) => Promise<LoginResult>
   confirmMfa: (code: string) => Promise<SimpleResult>
   register: (fullName: string, email: string, password: string) => Promise<RegisterResult>
   recover: (email: string) => Promise<SimpleResult>
   updatePassword: (password: string) => Promise<SimpleResult>
+  /**
+   * Relê a sessão do banco. `updateUser` do Supabase avisa o `onAuthStateChange`,
+   * mas um `update` na tabela `profiles` não emite evento nenhum — quem grava o
+   * próprio nome precisa pedir a leitura de novo para o cabeçalho acompanhar.
+   */
+  refresh: () => Promise<Session | null>
   logout: () => void
-  /** Recurso de demonstração: alterna o papel ativo para explorar os painéis. */
-  switchDemoRole: (email: string) => void
-  demoAccounts: DemoAccount[]
   enrollMfa: () => Promise<SimpleResult & { enrollment?: MfaEnrollment }>
   verifyEnrollment: (factorId: string, code: string) => Promise<SimpleResult>
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
-// Com chaves no .env.local usa Supabase Auth real; sem chaves, modo demo.
-const backend: AuthBackend = isSupabaseConfigured ? createSupabaseBackend() : createDemoBackend()
+// Uma implementação só: Supabase Auth. Sem banco o app nem sobe (ver client.ts).
+const backend: AuthBackend = createSupabaseBackend()
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
@@ -108,16 +107,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void backend.logout()
   }, [])
 
-  const switchDemoRole = useCallback((email: string) => {
-    backend.switchDemo?.(email)
+  const refresh = useCallback(async () => {
+    const next = await backend.restore()
+    setSession(next)
+    return next
   }, [])
 
   const enrollMfa = useCallback(async () => {
-    return (await backend.enrollMfa?.()) ?? { ok: false, error: 'MFA disponível apenas com o Supabase conectado.' }
+    return (await backend.enrollMfa?.()) ?? { ok: false, error: 'Não foi possível iniciar o cadastro de MFA.' }
   }, [])
 
   const verifyEnrollment = useCallback(async (factorId: string, code: string) => {
-    return (await backend.verifyEnrollment?.(factorId, code)) ?? { ok: false, error: 'MFA disponível apenas com o Supabase conectado.' }
+    return (await backend.verifyEnrollment?.(factorId, code)) ?? { ok: false, error: 'Não foi possível verificar o MFA.' }
   }, [])
 
   const value = useMemo<AuthContextValue>(
@@ -126,19 +127,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       initializing,
       isAuthenticated: Boolean(session),
-      mode: backend.mode,
       login,
       confirmMfa,
       register,
       recover,
       updatePassword,
+      refresh,
       logout,
-      switchDemoRole,
-      demoAccounts,
       enrollMfa,
       verifyEnrollment,
     }),
-    [session, loading, initializing, login, confirmMfa, register, recover, updatePassword, logout, switchDemoRole, enrollMfa, verifyEnrollment],
+    [session, loading, initializing, login, confirmMfa, register, recover, updatePassword, refresh, logout, enrollMfa, verifyEnrollment],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

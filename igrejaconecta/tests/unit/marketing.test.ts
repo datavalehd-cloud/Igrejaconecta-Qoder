@@ -10,7 +10,6 @@ import {
   CAMPAIGN_NOT_FOUND,
   CAMPAIGN_PUBLISH_NOT_CONNECTED,
   createCampaign,
-  demoChurchCampaigns,
   fetchChurchCampaigns,
   publishCampaign,
   setCampaignStatus,
@@ -19,7 +18,13 @@ import {
   type CampaignActor,
   type CampaignDraft,
 } from '@/services/data/marketingService'
-import type { SocialNetwork } from '@/types'
+import {
+  demoChurchCampaigns,
+  demoCreateCampaign,
+  demoSetCampaignStatus,
+  demoUpdateCampaign,
+} from '../fixtures/marketingMirror'
+import type { CampaignNetwork } from '@/types'
 
 /**
  * Campanhas (0014, Fase 5). A RLS é por linha e não limita coluna, então a projeção
@@ -61,12 +66,10 @@ function validDraft(overrides: Partial<CampaignDraft> = {}): CampaignDraft {
   }
 }
 
-function useRealClient() {
-  backend.supabase = { from }
-}
-
 beforeEach(() => {
-  backend.supabase = null
+  // O app não tem mais caminho sem Supabase: o cliente simulado está montado para
+  // todos os casos, e o que exercita a loja em memória chama o fixture direto.
+  backend.supabase = { from }
   vi.resetAllMocks()
   chain.select.mockReturnValue(chain)
   chain.eq.mockReturnValue(chain)
@@ -162,7 +165,6 @@ describe('leitura demo — espelho de marketing_campaigns_read', () => {
 
 describe('leitura real — contrato da consulta', () => {
   it('membro pede a projeção, a ordem por created_at e o recorte pela igreja', async () => {
-    useRealClient()
     await fetchChurchCampaigns('ch1', { role: 'church_admin' })
     expect(from).toHaveBeenCalledWith('marketing_campaigns')
     expect(chain.select).toHaveBeenCalledWith(CAMPAIGN_COLUMNS.join(','))
@@ -171,20 +173,17 @@ describe('leitura real — contrato da consulta', () => {
   })
 
   it('SuperAdmin não recorta por igreja: nenhuma chamada .eq', async () => {
-    useRealClient()
     await fetchChurchCampaigns(undefined, { role: 'superadmin' })
     expect(chain.select).toHaveBeenCalledWith(CAMPAIGN_COLUMNS.join(','))
     expect(chain.eq).not.toHaveBeenCalled()
   })
 
   it('sem igreja na sessão não sai consulta nenhuma', async () => {
-    useRealClient()
     expect(await fetchChurchCampaigns(undefined, { role: 'church_admin' })).toEqual([])
     expect(from).not.toHaveBeenCalled()
   })
 
   it('erro na leitura não recorre à lista fictícia', async () => {
-    useRealClient()
     readResult = { data: null, error: { message: 'falha de rede' } }
     await expect(fetchChurchCampaigns('ch1', { role: 'church_admin' })).rejects.toThrow('falha de rede')
   })
@@ -198,8 +197,13 @@ describe('validateCampaignDraft', () => {
   })
 
   it('recusa rede fora do conjunto suportado', () => {
-    const invalid = ['youtube'] as unknown as SocialNetwork[]
+    // `youtube` é rede de PERFIL (0015) mas não de campanha (0014+0020), e
+    // `tiktok` saiu das duas na 0020: as duas recusas são o contrato do app
+    // batendo com o CHECK do banco.
+    const invalid = ['youtube'] as unknown as CampaignNetwork[]
     expect(validateCampaignDraft(validDraft({ networks: invalid }))).toBe('Rede não suportada: youtube.')
+    const retired = ['tiktok'] as unknown as CampaignNetwork[]
+    expect(validateCampaignDraft(validDraft({ networks: retired }))).toBe('Rede não suportada: tiktok.')
   })
 
   it('aceita rascunho válido', () => {
@@ -210,7 +214,6 @@ describe('validateCampaignDraft', () => {
 
 describe('escritas — portas de permissão', () => {
   it('papel sem marketing.manage não escreve, e nenhuma consulta sai', async () => {
-    useRealClient()
     for (const role of ['pastor', 'visitor'] as const) {
       const actor: CampaignActor = { churchId: 'ch1', role }
       expect(await createCampaign(validDraft(), actor)).toEqual({ ok: false, error: CAMPAIGN_MANAGE_DENIED })
@@ -231,10 +234,10 @@ describe('escritas — portas de permissão', () => {
   })
 })
 
-describe('escrita demo — cria, edita, agenda e cancela; nunca apaga', () => {
-  it('church_admin cria campanha na própria igreja, como rascunho', async () => {
+describe('loja do fixture — cria, edita, agenda e cancela; nunca apaga', () => {
+  it('church_admin cria campanha na própria igreja, como rascunho', () => {
     const antes = campaigns.length
-    const resultado = await createCampaign(validDraft(), { churchId: 'ch1', role: 'church_admin' })
+    const resultado = demoCreateCampaign(validDraft(), { churchId: 'ch1', role: 'church_admin' })
     expect(resultado.ok).toBe(true)
     if (!resultado.ok) return
     expect(campaigns).toHaveLength(antes + 1)
@@ -246,8 +249,8 @@ describe('escrita demo — cria, edita, agenda e cancela; nunca apaga', () => {
     expect(Object.keys(resultado.campaign).sort()).toEqual([...CAMPAIGN_COLUMNS].sort())
   })
 
-  it('church_admin edita a própria campanha; church_id não vai no patch', async () => {
-    const resultado = await updateCampaign('cp2', validDraft({ name: 'Vigília remarcada' }), {
+  it('church_admin edita a própria campanha; church_id não vai no patch', () => {
+    const resultado = demoUpdateCampaign('cp2', validDraft({ name: 'Vigília remarcada' }), {
       churchId: 'ch1',
       role: 'church_admin',
     })
@@ -258,18 +261,18 @@ describe('escrita demo — cria, edita, agenda e cancela; nunca apaga', () => {
     expect(campaigns.find((c) => c.id === 'cp2')?.church_id).toBe('ch1')
   })
 
-  it('agenda e cancela mudam o status; agendar sem data é recusado', async () => {
-    const semData = await setCampaignStatus('cp2', 'scheduled', { churchId: 'ch1', role: 'church_admin' })
+  it('agenda e cancela mudam o status; agendar sem data é recusado', () => {
+    const semData = demoSetCampaignStatus('cp2', 'scheduled', { churchId: 'ch1', role: 'church_admin' })
     expect(semData).toEqual({ ok: false, error: 'Escolha a data e a hora para agendar a campanha.' })
 
-    const agendada = await setCampaignStatus('cp2', 'scheduled', { churchId: 'ch1', role: 'church_admin' }, '2026-12-20T19:00:00.000Z')
+    const agendada = demoSetCampaignStatus('cp2', 'scheduled', { churchId: 'ch1', role: 'church_admin' }, '2026-12-20T19:00:00.000Z')
     expect(agendada.ok).toBe(true)
     if (agendada.ok) {
       expect(agendada.campaign.status).toBe('scheduled')
       expect(agendada.campaign.scheduled_for).toBe('2026-12-20T19:00:00.000Z')
     }
 
-    const cancelada = await setCampaignStatus('cp2', 'cancelled', { churchId: 'ch1', role: 'church_admin' })
+    const cancelada = demoSetCampaignStatus('cp2', 'cancelled', { churchId: 'ch1', role: 'church_admin' })
     expect(cancelada.ok).toBe(true)
     if (cancelada.ok) {
       expect(cancelada.campaign.status).toBe('cancelled')
@@ -277,18 +280,18 @@ describe('escrita demo — cria, edita, agenda e cancela; nunca apaga', () => {
     }
   })
 
-  it('SuperAdmin é transversal: edita campanha de qualquer igreja', async () => {
-    const resultado = await updateCampaign('cp4', validDraft({ name: 'Florescer remarcado' }), { role: 'superadmin' })
+  it('SuperAdmin é transversal: edita campanha de qualquer igreja', () => {
+    const resultado = demoUpdateCampaign('cp4', validDraft({ name: 'Florescer remarcado' }), { role: 'superadmin' })
     expect(resultado.ok).toBe(true)
     if (!resultado.ok) return
     expect(resultado.campaign.name).toBe('Florescer remarcado')
   })
 
-  it('church_admin de uma igreja não alcança a campanha da vizinha: mesma mensagem de não-existente', async () => {
+  it('church_admin de uma igreja não alcança a campanha da vizinha: mesma mensagem de não-existente', () => {
     // cp4 é da ch2; u1 administra a ch1. Sem oráculo de existência.
-    expect(await updateCampaign('cp4', validDraft(), { churchId: 'ch1', role: 'church_admin' }))
+    expect(demoUpdateCampaign('cp4', validDraft(), { churchId: 'ch1', role: 'church_admin' }))
       .toEqual({ ok: false, error: CAMPAIGN_NOT_FOUND })
-    expect(await updateCampaign('campanha-que-nao-existe', validDraft(), { churchId: 'ch1', role: 'church_admin' }))
+    expect(demoUpdateCampaign('campanha-que-nao-existe', validDraft(), { churchId: 'ch1', role: 'church_admin' }))
       .toEqual({ ok: false, error: CAMPAIGN_NOT_FOUND })
     expect(campaigns.find((c) => c.id === 'cp4')?.name).toBe('Florescer — convite mulheres')
   })
@@ -303,7 +306,6 @@ describe('escrita demo — cria, edita, agenda e cancela; nunca apaga', () => {
 
 describe('publicação — nunca escreve published sem provedor', () => {
   it('publishCampaign devolve "não conectado" para qualquer papel, sem escrever', async () => {
-    useRealClient()
     for (const actor of [
       { role: 'superadmin' },
       { churchId: 'ch1', role: 'church_admin' },
@@ -332,7 +334,6 @@ describe('publicação — nunca escreve published sem provedor', () => {
 
 describe('escrita real — contrato e erros do banco', () => {
   it('a criação envia só colunas reais, com a igreja da sessão', async () => {
-    useRealClient()
     chain.maybeSingle.mockResolvedValue({ data: { id: 'cp-real', church_id: 'ch-real', status: 'draft' }, error: null })
     await createCampaign(validDraft(), { churchId: 'ch-real', role: 'church_admin' })
     expect(chain.insert).toHaveBeenCalled()
@@ -344,7 +345,6 @@ describe('escrita real — contrato e erros do banco', () => {
   })
 
   it('a edição não envia church_id nem status', async () => {
-    useRealClient()
     chain.maybeSingle.mockResolvedValue({ data: { id: 'cp1' }, error: null })
     await updateCampaign('cp1', validDraft(), { churchId: 'ch1', role: 'church_admin' })
     const patch = chain.update.mock.calls[0]![0] as Record<string, unknown>
@@ -355,7 +355,6 @@ describe('escrita real — contrato e erros do banco', () => {
   })
 
   it('agendar envia status e scheduled_for; cancelar zera a data', async () => {
-    useRealClient()
     chain.maybeSingle.mockResolvedValue({ data: { id: 'cp1', status: 'scheduled' }, error: null })
     await setCampaignStatus('cp1', 'scheduled', { churchId: 'ch1', role: 'church_admin' }, '2026-12-20T19:00:00.000Z')
     expect(chain.update.mock.calls[0]![0]).toEqual({ status: 'scheduled', scheduled_for: '2026-12-20T19:00:00.000Z' })
@@ -365,7 +364,6 @@ describe('escrita real — contrato e erros do banco', () => {
   })
 
   it('linha que não volta é a mesma mensagem de não-existente: sem oráculo', async () => {
-    useRealClient()
     chain.maybeSingle.mockResolvedValue({ data: null, error: null })
     expect(await updateCampaign('cp4', validDraft(), { churchId: 'ch1', role: 'church_admin' }))
       .toEqual({ ok: false, error: CAMPAIGN_NOT_FOUND })
@@ -378,7 +376,6 @@ describe('escrita real — contrato e erros do banco', () => {
     ['igreja/evento inexistente', '23503', 'violates foreign key constraint', 'Igreja ou evento não encontrado. Atualize a lista e tente de novo.'],
     ['erro desconhecido', '57014', 'statement timeout', 'statement timeout'],
   ])('erro do banco — %s — vira mensagem legível', async (_rotulo, code, message, esperado) => {
-    useRealClient()
     chain.maybeSingle.mockResolvedValue({ data: null, error: { code, message } })
     expect(await createCampaign(validDraft(), { churchId: 'ch-real', role: 'church_admin' }))
       .toEqual({ ok: false, error: esperado })

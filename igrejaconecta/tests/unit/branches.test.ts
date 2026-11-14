@@ -10,21 +10,27 @@ import {
   BRANCH_NOT_FOUND,
   BRANCH_PATCH_COLUMNS,
   createBranch,
-  demoChurchBranches,
   fetchChurchBranches,
   updateBranch,
   validateBranchDraft,
   type BranchActor,
   type BranchDraft,
 } from '@/services/data/branchService'
+import {
+  demoChurchBranches,
+  demoCreateBranch,
+  demoUpdateBranch,
+  resetBranchFixture,
+} from '../fixtures/branchMirror'
 
 /**
  * Filiais (0013, Fase 4). A RLS é por linha e não limita coluna, então a projeção
- * daqui é o contrato do que chega ao navegador; os espelhos demo têm de reproduzir
- * a audiência da política (membro **ativo** da própria igreja, SuperAdmin para
- * todas — caso O3: vínculo `invited` não lê). E não existe delete em camada
- * nenhuma: a tabela não tem política nem grant de delete (O7/O10), então o serviço
- * também não pode expor a operação.
+ * daqui é o contrato do que chega ao navegador; a loja em memória do fixture
+ * (`tests/fixtures/branchMirror.ts`) continua especificando a audiência da política
+ * (membro **ativo** da própria igreja, SuperAdmin para todas — caso O3: vínculo
+ * `invited` não lê). E não existe delete em camada nenhuma: a tabela não tem
+ * política nem grant de delete (O7/O10), então o serviço também não pode expor a
+ * operação.
  */
 
 const backend = vi.hoisted(() => ({ supabase: null as { from: ReturnType<typeof vi.fn> } | null }))
@@ -44,7 +50,6 @@ const chain = {
   then: vi.fn(),
 }
 const from = vi.fn()
-const originalBranches = structuredClone(branches)
 
 const branchesDdl = tableBlock('0013_branches_location.sql', 'church_branches')
 
@@ -61,12 +66,8 @@ function validDraft(overrides: Partial<BranchDraft> = {}): BranchDraft {
   }
 }
 
-function useRealClient() {
-  backend.supabase = { from }
-}
-
 beforeEach(() => {
-  backend.supabase = null
+  backend.supabase = { from }
   vi.resetAllMocks()
   chain.select.mockReturnValue(chain)
   chain.eq.mockReturnValue(chain)
@@ -83,7 +84,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
-  branches.splice(0, branches.length, ...structuredClone(originalBranches))
+  resetBranchFixture()
   backend.supabase = null
 })
 
@@ -147,7 +148,6 @@ describe('leitura demo — espelho de church_branches_read', () => {
 
 describe('leitura real — contrato da consulta', () => {
   it('membro pede a projeção, a ordem de nome e o recorte pela igreja', async () => {
-    useRealClient()
     readResult = { data: [], error: null }
     await fetchChurchBranches('ch1', { role: 'church_admin' })
     expect(from).toHaveBeenCalledWith('church_branches')
@@ -157,7 +157,6 @@ describe('leitura real — contrato da consulta', () => {
   })
 
   it('SuperAdmin não recorta por igreja: nenhuma chamada .eq', async () => {
-    useRealClient()
     readResult = { data: [], error: null }
     await fetchChurchBranches(undefined, { role: 'superadmin' })
     expect(chain.select).toHaveBeenCalledWith(BRANCH_COLUMNS.join(','))
@@ -165,13 +164,11 @@ describe('leitura real — contrato da consulta', () => {
   })
 
   it('sem igreja na sessão não sai consulta nenhuma', async () => {
-    useRealClient()
     expect(await fetchChurchBranches(undefined, { role: 'church_admin' })).toEqual([])
     expect(from).not.toHaveBeenCalled()
   })
 
   it('erro na leitura não recorre à lista fictícia', async () => {
-    useRealClient()
     readResult = { data: null, error: { message: 'falha de rede' } }
     await expect(fetchChurchBranches('ch1', { role: 'church_admin' })).rejects.toThrow('falha de rede')
   })
@@ -199,7 +196,6 @@ describe('validateBranchDraft', () => {
 
 describe('escritas — portas de permissão', () => {
   it('papel sem church.manage não escreve, e nenhuma consulta sai', async () => {
-    useRealClient()
     for (const role of ['manager', 'communicator', 'pastor', 'visitor'] as const) {
       const actor: BranchActor = { churchId: 'ch1', role }
       expect(await createBranch(validDraft(), actor)).toEqual({ ok: false, error: BRANCH_MANAGE_DENIED })
@@ -218,10 +214,10 @@ describe('escritas — portas de permissão', () => {
   })
 })
 
-describe('escrita demo — cria e edita, nunca apaga', () => {
-  it('church_admin cria filial na própria igreja, com a igreja da sessão', async () => {
+describe('escrita na loja do fixture — cria e edita, nunca apaga', () => {
+  it('church_admin cria filial na própria igreja, com a igreja da sessão', () => {
     const antes = branches.length
-    const resultado = await createBranch(validDraft(), { churchId: 'ch1', role: 'church_admin' })
+    const resultado = demoCreateBranch(validDraft(), { churchId: 'ch1', role: 'church_admin' })
     expect(resultado.ok).toBe(true)
     if (!resultado.ok) return
     expect(branches).toHaveLength(antes + 1)
@@ -232,8 +228,8 @@ describe('escrita demo — cria e edita, nunca apaga', () => {
     expect(Object.keys(resultado.branch).sort()).toEqual([...BRANCH_COLUMNS].sort())
   })
 
-  it('church_admin edita a própria filial', async () => {
-    const resultado = await updateBranch('b2', validDraft({ name: 'Zona Sul — Sede' }), {
+  it('church_admin edita a própria filial', () => {
+    const resultado = demoUpdateBranch('b2', validDraft({ name: 'Zona Sul — Sede' }), {
       churchId: 'ch1',
       role: 'church_admin',
     })
@@ -243,18 +239,18 @@ describe('escrita demo — cria e edita, nunca apaga', () => {
     expect(branches.find((b) => b.id === 'b2')?.name).toBe('Zona Sul — Sede')
   })
 
-  it('SuperAdmin é transversal: edita filial de qualquer igreja', async () => {
-    const resultado = await updateBranch('b3', validDraft({ name: 'Campus Renomeado' }), { role: 'superadmin' })
+  it('SuperAdmin é transversal: edita filial de qualquer igreja', () => {
+    const resultado = demoUpdateBranch('b3', validDraft({ name: 'Campus Renomeado' }), { role: 'superadmin' })
     expect(resultado.ok).toBe(true)
     if (!resultado.ok) return
     expect(resultado.branch.name).toBe('Campus Renomeado')
   })
 
-  it('church_admin de uma igreja não alcança a filial da vizinha: mesma mensagem de não-existente', async () => {
+  it('church_admin de uma igreja não alcança a filial da vizinha: mesma mensagem de não-existente', () => {
     // b3 é da ch2; a1 administra a ch1. Sem oráculo de existência.
-    expect(await updateBranch('b3', validDraft(), { churchId: 'ch1', role: 'church_admin' }))
+    expect(demoUpdateBranch('b3', validDraft(), { churchId: 'ch1', role: 'church_admin' }))
       .toEqual({ ok: false, error: BRANCH_NOT_FOUND })
-    expect(await updateBranch('filial-que-nao-existe', validDraft(), { churchId: 'ch1', role: 'church_admin' }))
+    expect(demoUpdateBranch('filial-que-nao-existe', validDraft(), { churchId: 'ch1', role: 'church_admin' }))
       .toEqual({ ok: false, error: BRANCH_NOT_FOUND })
     expect(branches.find((b) => b.id === 'b3')?.name).toBe('Campus Aquarius')
   })
@@ -269,7 +265,6 @@ describe('escrita demo — cria e edita, nunca apaga', () => {
 
 describe('escrita real — contrato e erros do banco', () => {
   it('a criação envia só colunas reais, com a igreja da sessão', async () => {
-    useRealClient()
     chain.maybeSingle.mockResolvedValue({ data: { id: 'br-real', church_id: 'ch-real' }, error: null })
     await createBranch(validDraft(), { churchId: 'ch-real', role: 'church_admin' })
     expect(chain.insert).toHaveBeenCalled()
@@ -280,7 +275,6 @@ describe('escrita real — contrato e erros do banco', () => {
   })
 
   it('a edição não envia church_id', async () => {
-    useRealClient()
     chain.maybeSingle.mockResolvedValue({ data: { id: 'b1' }, error: null })
     await updateBranch('b1', validDraft(), { churchId: 'ch1', role: 'church_admin' })
     const patch = chain.update.mock.calls[0]![0] as Record<string, unknown>
@@ -290,7 +284,6 @@ describe('escrita real — contrato e erros do banco', () => {
   })
 
   it('linha que não volta é a mesma mensagem de não-existente: sem oráculo', async () => {
-    useRealClient()
     chain.maybeSingle.mockResolvedValue({ data: null, error: null })
     expect(await updateBranch('b3', validDraft(), { churchId: 'ch1', role: 'church_admin' }))
       .toEqual({ ok: false, error: BRANCH_NOT_FOUND })
@@ -302,7 +295,6 @@ describe('escrita real — contrato e erros do banco', () => {
     ['igreja inexistente', '23503', 'violates foreign key constraint', 'Igreja não encontrada. Atualize a lista e tente de novo.'],
     ['erro desconhecido', '57014', 'statement timeout', 'statement timeout'],
   ])('erro do banco — %s — vira mensagem legível', async (_rotulo, code, message, esperado) => {
-    useRealClient()
     chain.maybeSingle.mockResolvedValue({ data: null, error: { code, message } })
     expect(await createBranch(validDraft(), { churchId: 'ch-real', role: 'church_admin' }))
       .toEqual({ ok: false, error: esperado })

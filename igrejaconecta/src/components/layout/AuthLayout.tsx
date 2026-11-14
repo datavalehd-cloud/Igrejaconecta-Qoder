@@ -2,7 +2,6 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { Logo } from './Logo'
-import { isSupabaseConfigured } from '@/services/supabase/client'
 
 export function AuthLayout({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
   return (
@@ -37,13 +36,6 @@ export function AuthLayout({ title, subtitle, children }: { title: string; subti
           </div>
           <h1 className="text-2xl font-bold text-navy">{title}</h1>
           {subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}
-
-          {!isSupabaseConfigured && (
-            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              <strong>Modo demonstração:</strong> adicione <code>VITE_SUPABASE_URL</code> e{' '}
-              <code>VITE_SUPABASE_ANON_KEY</code> no <code>.env.local</code> para ativar o Supabase Auth real.
-            </div>
-          )}
 
           <div className="mt-6">{children}</div>
         </div>

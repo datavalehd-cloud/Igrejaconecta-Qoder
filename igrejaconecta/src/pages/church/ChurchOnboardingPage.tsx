@@ -9,6 +9,7 @@ import {
 } from '@/components/common/primitives'
 import { Notice } from '@/components/common/Notice'
 import { Building2, CheckCircle2, ShieldCheck, ArrowRight } from 'lucide-react'
+import { UF_LIST } from '@/utils/ufs'
 import type { Church } from '@/types'
 
 /**
@@ -17,11 +18,6 @@ import type { Church } from '@/types'
  * a tela não escolhe o papel nem o status, e por isso diz com todas as letras que
  * nada funciona antes da aprovação do SuperAdmin.
  */
-
-const UF_LIST = [
-  'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG',
-  'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO',
-]
 
 const EMPTY_FORM = {
   name: '',
@@ -35,7 +31,7 @@ const EMPTY_FORM = {
 }
 
 export function ChurchOnboardingPage() {
-  const { session, mode } = useAuth()
+  const { session } = useAuth()
   const { churchId, isSuperAdmin } = usePermissions()
   const { rows: myChurches, loading: churchesLoading } = useMyChurches()
   const [form, setForm] = useState<ChurchDraft & { state: string }>({ ...EMPTY_FORM })
@@ -89,9 +85,6 @@ export function ChurchOnboardingPage() {
             <p>O SuperAdmin precisa aprovar a igreja antes de ela aparecer no diretório público e de os seus eventos serem publicados.</p>
             <p>Assim que a aprovação sair, saia e entre de novo para a sessão carregar o papel de administrador da igreja.</p>
             <p>Ative a verificação em duas etapas em <Link className="font-semibold text-brand-600 hover:underline" to="/app/perfil">Meu perfil</Link> — ela é obrigatória para quem administra igreja.</p>
-            {mode === 'demo' && (
-              <p>No modo demonstração nada é gravado: ao recarregar, a loja volta ao estado inicial e o cadastro some.</p>
-            )}
             <div className="flex flex-wrap gap-2 pt-2">
               <Button onClick={() => window.location.assign('/app')} disabled={saving}>
                 {saving ? 'Recarregando...' : 'Recarregar sessão'}

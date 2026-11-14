@@ -12,13 +12,17 @@ import {
   STATS_COLUMNS,
   cancelRegistration,
   checkInRegistration,
-  demoChurchRegistrations,
-  demoRegisterForEvent,
-  demoRegistrationStats,
   fetchChurchRegistrations,
   fetchRegistrationStats,
   registerForEvent,
 } from '@/services/data/registrationService'
+import {
+  demoCancelRegistration,
+  demoCheckIn,
+  demoChurchRegistrations,
+  demoRegisterForEvent,
+  demoRegistrationStats,
+} from '../fixtures/registrationMirror'
 import { queueText, waitlistAdmission } from '@/utils/checkInPolicy'
 import type { Registration, RegistrationStats } from '@/types'
 
@@ -34,8 +38,9 @@ import type { Registration, RegistrationStats } from '@/types'
  *     o visitante anon passa a ler dado pessoal de terceiro (caso N15);
  *   * os códigos de retorno das RPCs — cada um tem de ter mensagem na tela, e
  *     cada mensagem tem de corresponder a um código que o SQL realmente devolve;
- *   * os espelhos demo, que reproduzem a mesma audiência, a mesma fila e a mesma
- *     porta de permissão (`registrations.manage`, que o comunicador não tem).
+ *   * o fixture (`tests/fixtures/registrationMirror.ts`), que reproduz a mesma
+ *     audiência, a mesma fila e a mesma porta de permissão (`registrations.manage`,
+ *     que o comunicador não tem).
  */
 
 const backend = vi.hoisted(() => ({
@@ -63,7 +68,9 @@ const suite = readFileSync(
 )
 
 beforeEach(() => {
-  backend.supabase = null
+  // O app não tem mais caminho sem Supabase: o client simulado está montado para
+  // todos os casos, e o que exercita a loja em memória chama o fixture direto.
+  backend.supabase = { from, rpc }
   vi.resetAllMocks()
   chain.select.mockReturnValue(chain)
   chain.eq.mockReturnValue(chain)
@@ -79,10 +86,6 @@ afterEach(() => {
   registrations.splice(0, registrations.length, ...structuredClone(originalRegistrations))
   backend.supabase = null
 })
-
-function useRealClient() {
-  backend.supabase = { from, rpc }
-}
 
 /** Evento-fixture: o mock tem datas de 2026 e o teste não pode depender do relógio. */
 function eventFixture(overrides: Partial<(typeof originalEvents)[number]> = {}) {
@@ -276,13 +279,13 @@ describe('projeção — o que chega ao navegador', () => {
   })
 
   it('sem igreja da sessão não há lista — o recorte não é a guarda, mas sem ele não há o que pedir', async () => {
-    useRealClient()
+
     await expect(fetchChurchRegistrations()).resolves.toEqual([])
     expect(from).not.toHaveBeenCalled()
   })
 
   it('papel sem registrations.manage não pede a lista: o espelho não mostra o que o banco recusa (N3)', async () => {
-    useRealClient()
+
     // os papéis são os do seed: comunicador tem events.manage, não registrations.manage
     await expect(fetchChurchRegistrations('ch1', 'communicator')).resolves.toEqual([])
     await expect(fetchChurchRegistrations('ch1', 'visitor')).resolves.toEqual([])
@@ -297,7 +300,7 @@ describe('projeção — o que chega ao navegador', () => {
 
 describe('cliente real — consultas e RPCs', () => {
   it('a lista da equipe seleciona a projeção e resolve o nome do evento pelo embed', async () => {
-    useRealClient()
+
     chain.order.mockResolvedValue({
       data: [
         {
@@ -329,7 +332,7 @@ describe('cliente real — consultas e RPCs', () => {
   })
 
   it('a contagem vem da view de agregados, sem filtro nenhum no cliente', async () => {
-    useRealClient()
+
     chain.select.mockResolvedValue({
       data: [{
         event_id: 'e1', church_id: 'ch1', capacity: 500, pending_count: 0, confirmed_count: 2,
@@ -347,7 +350,7 @@ describe('cliente real — consultas e RPCs', () => {
   })
 
   it('a inscrição chama a RPC com dados normalizados e devolve o estado confirmado', async () => {
-    useRealClient()
+
     rpc.mockResolvedValue({ data: 'waitlist', error: null })
     const result = await registerForEvent({ eventId: 'e1', name: '  Carla Dias ', email: ' CARLA@Email.test ', phone: '  ' })
     expect(rpc).toHaveBeenCalledWith('register_for_event', {
@@ -360,21 +363,21 @@ describe('cliente real — consultas e RPCs', () => {
   })
 
   it('a recusa da RPC vira a mensagem do mapa, não o código cru', async () => {
-    useRealClient()
+
     rpc.mockResolvedValue({ data: 'ja_inscrita', error: null })
     const result = await registerForEvent({ eventId: 'e1', name: 'Carla Dias', email: 'carla@email.test' })
     expect(result).toEqual({ ok: false, error: REGISTER_MESSAGES.ja_inscrita })
   })
 
   it('erro do banco com 42501 vira mensagem de permissão', async () => {
-    useRealClient()
+
     rpc.mockResolvedValue({ data: null, error: { code: '42501', message: 'permission denied' } })
     const result = await checkInRegistration('r1', 'church_admin')
     expect(result).toEqual({ ok: false, error: 'Sem permissão para esta ação na sua igreja.' })
   })
 
   it('dados inválidos nem chegam ao banco', async () => {
-    useRealClient()
+
     const result = await registerForEvent({ eventId: 'e1', name: 'A', email: 'sem-arroba' })
     expect(result.ok).toBe(false)
     expect(result.error).toBe(REGISTER_MESSAGES.dados_invalidos)
@@ -382,7 +385,7 @@ describe('cliente real — consultas e RPCs', () => {
   })
 
   it('check-in e cancelamento passam o id da inscrição para as RPCs', async () => {
-    useRealClient()
+
     rpc.mockResolvedValue({ data: 'presente', error: null })
     await expect(checkInRegistration('r9', 'pastor')).resolves.toEqual({ ok: true })
     expect(rpc).toHaveBeenCalledWith('check_in_registration', { p_registration: 'r9' })
@@ -393,12 +396,20 @@ describe('cliente real — consultas e RPCs', () => {
     expect(cancelled.ok).toBe(true)
     expect(cancelled.error).toBe(CANCEL_MESSAGES.cancelada_com_promocao)
   })
+
+  it('papel sem registrations.manage não chega na RPC: a recusa é a mesma do banco (N3)', async () => {
+    for (const role of ['communicator', 'visitor', undefined] as const) {
+      expect(await checkInRegistration('r1', role)).toEqual({ ok: false, error: CHECK_IN_MESSAGES.sem_permissao })
+      expect(await cancelRegistration('r1', role)).toEqual({ ok: false, error: CANCEL_MESSAGES.sem_permissao })
+    }
+    expect(rpc).not.toHaveBeenCalled()
+  })
 })
 
-describe('loja demo — espelha o grupo N', () => {
-  it('inscreve no evento publicado, deriva a igreja e gera o código (N4)', async () => {
+describe('loja do fixture — espelha o grupo N', () => {
+  it('inscreve no evento publicado, deriva a igreja e gera o código (N4)', () => {
     eventFixture()
-    const result = await registerForEvent({ eventId: 'e-reg', name: ' Carla Dias ', email: ' CARLA@Email.test ', phone: '(12) 99999-0000' })
+    const result = demoRegisterForEvent({ eventId: 'e-reg', name: ' Carla Dias ', email: ' CARLA@Email.test ', phone: '(12) 99999-0000' })
     expect(result).toEqual({ ok: true, status: 'confirmed' })
 
     const [row] = registrations.filter((r) => r.visitor_email === 'carla@email.test')
@@ -413,41 +424,41 @@ describe('loja demo — espelha o grupo N', () => {
     ['privado', { visibility: 'private' as const }],
     ['não listado', { visibility: 'unlisted' as const }],
     ['agendado', { status: 'scheduled' as const }],
-  ])('evento %s não recebe inscrição e a recusa é a mesma de um evento inexistente (N5)', async (_label, overrides) => {
+  ])('evento %s não recebe inscrição e a recusa é a mesma de um evento inexistente (N5)', (_label, overrides) => {
     eventFixture(overrides)
-    const blocked = await registerForEvent({ eventId: 'e-reg', name: 'Espião', email: 'espiao@email.test' })
-    const missing = await registerForEvent({ eventId: 'nao-existe', name: 'Espião', email: 'espiao@email.test' })
+    const blocked = demoRegisterForEvent({ eventId: 'e-reg', name: 'Espião', email: 'espiao@email.test' })
+    const missing = demoRegisterForEvent({ eventId: 'nao-existe', name: 'Espião', email: 'espiao@email.test' })
     expect(blocked.error).toBe(REGISTER_MESSAGES.evento_indisponivel)
     expect(missing.error).toBe(blocked.error)
     expect(registrations.some((r) => r.visitor_email === 'espiao@email.test')).toBe(false)
   })
 
-  it('igreja suspensa tira o evento do ar para inscrição (N5)', async () => {
+  it('igreja suspensa tira o evento do ar para inscrição (N5)', () => {
     eventFixture()
     churches.find((c) => c.id === 'ch1')!.approval_status = 'suspended'
-    const result = await registerForEvent({ eventId: 'e-reg', name: 'Carla', email: 'carla@email.test' })
+    const result = demoRegisterForEvent({ eventId: 'e-reg', name: 'Carla', email: 'carla@email.test' })
     expect(result.error).toBe(REGISTER_MESSAGES.evento_indisponivel)
   })
 
-  it('evento que já começou não recebe inscrição (N6)', async () => {
+  it('evento que já começou não recebe inscrição (N6)', () => {
     eventFixture({ starts_at: '2020-01-10T19:00:00' })
-    const result = await registerForEvent({ eventId: 'e-reg', name: 'Atrasado', email: 'atrasado@email.test' })
+    const result = demoRegisterForEvent({ eventId: 'e-reg', name: 'Atrasado', email: 'atrasado@email.test' })
     expect(result.error).toBe(REGISTER_MESSAGES.evento_encerrado)
   })
 
-  it('o mesmo e-mail não entra duas vezes no mesmo evento (N6)', async () => {
+  it('o mesmo e-mail não entra duas vezes no mesmo evento (N6)', () => {
     eventFixture()
-    await registerForEvent({ eventId: 'e-reg', name: 'Ana', email: 'ana@Duplicada.test' })
-    const second = await registerForEvent({ eventId: 'e-reg', name: 'Ana de novo', email: 'ANA@duplicada.test' })
+    demoRegisterForEvent({ eventId: 'e-reg', name: 'Ana', email: 'ana@Duplicada.test' })
+    const second = demoRegisterForEvent({ eventId: 'e-reg', name: 'Ana de novo', email: 'ANA@duplicada.test' })
     expect(second.error).toBe(REGISTER_MESSAGES.ja_inscrita)
     expect(registrations.filter((r) => r.visitor_email === 'ana@duplicada.test')).toHaveLength(1)
   })
 
-  it('capacidade cheia manda para a lista de espera e zera as vagas (N7)', async () => {
+  it('capacidade cheia manda para a lista de espera e zera as vagas (N7)', () => {
     eventFixture({ capacity: 2 })
-    expect((await registerForEvent({ eventId: 'e-reg', name: 'Um', email: 'um@email.test' })).status).toBe('confirmed')
-    expect((await registerForEvent({ eventId: 'e-reg', name: 'Dois', email: 'dois@email.test' })).status).toBe('confirmed')
-    expect((await registerForEvent({ eventId: 'e-reg', name: 'Três', email: 'tres@email.test' })).status).toBe('waitlist')
+    expect(demoRegisterForEvent({ eventId: 'e-reg', name: 'Um', email: 'um@email.test' }).status).toBe('confirmed')
+    expect(demoRegisterForEvent({ eventId: 'e-reg', name: 'Dois', email: 'dois@email.test' }).status).toBe('confirmed')
+    expect(demoRegisterForEvent({ eventId: 'e-reg', name: 'Três', email: 'tres@email.test' }).status).toBe('waitlist')
 
     const stats = demoRegistrationStats().find((s) => s.event_id === 'e-reg')!
     expect(stats.confirmed_count).toBe(2)
@@ -456,24 +467,24 @@ describe('loja demo — espelha o grupo N', () => {
     expect(stats.spots_left).toBe(0)
   })
 
-  it('evento sem capacidade não tem fila nem vagas contadas', async () => {
+  it('evento sem capacidade não tem fila nem vagas contadas', () => {
     eventFixture({ capacity: null })
     for (const index of [1, 2, 3, 4]) {
-      expect((await registerForEvent({ eventId: 'e-reg', name: `Pessoa ${index}`, email: `p${index}@email.test` })).status).toBe('confirmed')
+      expect(demoRegisterForEvent({ eventId: 'e-reg', name: `Pessoa ${index}`, email: `p${index}@email.test` }).status).toBe('confirmed')
     }
     const stats = demoRegistrationStats().find((s) => s.event_id === 'e-reg')!
     expect(stats.spots_left).toBeNull()
     expect(stats.waitlist_count).toBe(0)
   })
 
-  it('cancelar libera vaga e promove o mais antigo da fila (N8)', async () => {
+  it('cancelar libera vaga e promove o mais antigo da fila (N8)', () => {
     eventFixture({ capacity: 1 })
-    await registerForEvent({ eventId: 'e-reg', name: 'Primeiro', email: 'um@email.test' })
-    await registerForEvent({ eventId: 'e-reg', name: 'Segundo', email: 'dois@email.test' })
-    await registerForEvent({ eventId: 'e-reg', name: 'Terceiro', email: 'tres@email.test' })
+    demoRegisterForEvent({ eventId: 'e-reg', name: 'Primeiro', email: 'um@email.test' })
+    demoRegisterForEvent({ eventId: 'e-reg', name: 'Segundo', email: 'dois@email.test' })
+    demoRegisterForEvent({ eventId: 'e-reg', name: 'Terceiro', email: 'tres@email.test' })
 
     const first = registrations.find((r) => r.visitor_email === 'um@email.test')!
-    const result = await cancelRegistration(first.id, 'church_admin')
+    const result = demoCancelRegistration(first.id, 'church_admin')
     expect(result.ok).toBe(true)
     expect(result.error).toBe(CANCEL_MESSAGES.cancelada_com_promocao)
     expect(first.status).toBe('cancelled')
@@ -481,51 +492,48 @@ describe('loja demo — espelha o grupo N', () => {
     expect(registrations.find((r) => r.visitor_email === 'tres@email.test')!.status).toBe('waitlist')
   })
 
-  it('cancelar duas vezes é recusado (N10)', async () => {
+  it('cancelar duas vezes é recusado (N10)', () => {
     eventFixture()
-    await registerForEvent({ eventId: 'e-reg', name: 'Ana', email: 'ana@email.test' })
+    demoRegisterForEvent({ eventId: 'e-reg', name: 'Ana', email: 'ana@email.test' })
     const row = registrations.find((r) => r.visitor_email === 'ana@email.test')!
-    await cancelRegistration(row.id, 'church_admin')
-    const again = await cancelRegistration(row.id, 'church_admin')
+    demoCancelRegistration(row.id, 'church_admin')
+    const again = demoCancelRegistration(row.id, 'church_admin')
     expect(again.ok).toBe(false)
     expect(again.error).toBe(CANCEL_MESSAGES.ja_cancelada)
   })
 
-  it('comunicador não faz check-in nem cancela: falta registrations.manage (N3)', async () => {
+  it('comunicador não faz check-in nem cancela: falta registrations.manage (N3)', () => {
     eventFixture()
-    await registerForEvent({ eventId: 'e-reg', name: 'Ana', email: 'ana@email.test' })
+    demoRegisterForEvent({ eventId: 'e-reg', name: 'Ana', email: 'ana@email.test' })
     const row = registrations.find((r) => r.visitor_email === 'ana@email.test')!
 
-    const checkIn = await checkInRegistration(row.id, 'communicator')
+    const checkIn = demoCheckIn(row.id, 'communicator')
     expect(checkIn.ok).toBe(false)
     expect(checkIn.error).toBe(CHECK_IN_MESSAGES.sem_permissao)
     expect(row.status).toBe('confirmed')
 
-    const cancel = await cancelRegistration(row.id, 'communicator')
+    const cancel = demoCancelRegistration(row.id, 'communicator')
     expect(cancel.ok).toBe(false)
     expect(row.status).toBe('confirmed')
   })
 
-  it('check-in registra presença, não repete e não aceita inscrição cancelada (N10)', async () => {
+  it('check-in registra presença, não repete e não aceita inscrição cancelada (N10)', () => {
     eventFixture()
-    await registerForEvent({ eventId: 'e-reg', name: 'Ana', email: 'ana@email.test' })
+    demoRegisterForEvent({ eventId: 'e-reg', name: 'Ana', email: 'ana@email.test' })
     const row = registrations.find((r) => r.visitor_email === 'ana@email.test')!
 
-    expect((await checkInRegistration(row.id, 'pastor')).ok).toBe(true)
+    expect(demoCheckIn(row.id, 'pastor').ok).toBe(true)
     expect(row.status).toBe('checked_in')
     expect(row.checked_in_at).toBeTruthy()
 
-    const repeated = await checkInRegistration(row.id, 'pastor')
-    expect(repeated.error).toBe(CHECK_IN_MESSAGES.ja_presente)
+    expect(demoCheckIn(row.id, 'pastor').error).toBe(CHECK_IN_MESSAGES.ja_presente)
 
-    await cancelRegistration(row.id, 'pastor')
-    const cancelled = await checkInRegistration(row.id, 'pastor')
-    expect(cancelled.error).toBe(CHECK_IN_MESSAGES.cancelada)
+    demoCancelRegistration(row.id, 'pastor')
+    expect(demoCheckIn(row.id, 'pastor').error).toBe(CHECK_IN_MESSAGES.cancelada)
   })
 
-  it('check-in de inscrição inexistente não inventa presença', async () => {
-    const result = await checkInRegistration('nao-existe', 'church_admin')
-    expect(result.ok).toBe(false)
+  it('check-in de inscrição inexistente não inventa presença', () => {
+    expect(demoCheckIn('nao-existe', 'church_admin').ok).toBe(false)
   })
 
   it('a lista da equipe traz só os eventos da própria igreja, com código e nome do evento', () => {
@@ -545,7 +553,7 @@ describe('loja demo — espelha o grupo N', () => {
     expect(demoRegistrationStats().map((s) => s.event_id)).toEqual(events.map((e) => e.id))
   })
 
-  it('a loja demo grava a inscrição e ela aparece na lista da equipe', async () => {
+  it('a loja do fixture grava a inscrição e ela aparece na lista da equipe', () => {
     eventFixture()
     const before = registrations.length
     expect(demoRegisterForEvent({ eventId: 'e-reg', name: 'Ana', email: 'ana@email.test' }).ok).toBe(true)
@@ -553,7 +561,7 @@ describe('loja demo — espelha o grupo N', () => {
     expect(demoChurchRegistrations('ch1').map((r) => r.visitor_email)).toContain('ana@email.test')
   })
 
-  it('a linha devolvida pela loja demo satisfaz o tipo de inscrição', () => {
+  it('a linha devolvida pelo fixture satisfaz o tipo de inscrição', () => {
     const row: Registration = demoChurchRegistrations('ch1')[0]!
     expect(row.status).toMatch(/^(pending|confirmed|waitlist|checked_in|cancelled)$/)
     expect(row.created_at).toBeTruthy()

@@ -23,20 +23,18 @@ import {
 import { Notice } from '@/components/common/Notice'
 import { DataTable, type Column } from '@/components/common/DataTable'
 import {
-  Plus, Camera, ThumbsUp, Music2, MessageCircle, CalendarClock, Pencil, X, Send, Copy, Share2, Ban, RotateCcw, Sparkles,
+  Plus, Camera, ThumbsUp, MessageCircle, CalendarClock, Pencil, X, Send, Copy, Share2, Ban, RotateCcw, Sparkles,
 } from 'lucide-react'
-import type { Campaign, ChurchEvent, SocialNetwork } from '@/types'
+import type { Campaign, CampaignNetwork, ChurchEvent } from '@/types'
 
-const networkIcon: Record<SocialNetwork, typeof Camera> = {
+const networkIcon: Record<CampaignNetwork, typeof Camera> = {
   instagram: Camera,
   facebook: ThumbsUp,
-  tiktok: Music2,
   whatsapp: MessageCircle,
 }
-const networkLabel: Record<SocialNetwork, string> = {
+const networkLabel: Record<CampaignNetwork, string> = {
   instagram: 'Instagram',
   facebook: 'Facebook',
-  tiktok: 'TikTok',
   whatsapp: 'WhatsApp',
 }
 const statusMap: Record<Campaign['status'], { label: string; tone: 'neutral' | 'brand' | 'green' | 'amber' | 'red' }> = {
@@ -234,11 +232,11 @@ function CampaignForm({
   const [name, setName] = useState(initial?.name ?? '')
   const [message, setMessage] = useState(initial?.message ?? '')
   const [eventId, setEventId] = useState(initial?.event_id ?? '')
-  const [networks, setNetworks] = useState<SocialNetwork[]>(initial?.networks ?? [])
+  const [networks, setNetworks] = useState<CampaignNetwork[]>(initial?.networks ?? [])
   const [saving, setSaving] = useState(false)
   const [style, setStyle] = useState<CampaignTextStyle>('convite')
 
-  function toggleNetwork(network: SocialNetwork) {
+  function toggleNetwork(network: CampaignNetwork) {
     setNetworks((current) => current.includes(network) ? current.filter((n) => n !== network) : [...current, network])
   }
 

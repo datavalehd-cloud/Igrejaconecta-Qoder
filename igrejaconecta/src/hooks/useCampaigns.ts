@@ -8,8 +8,8 @@ import { fetchChurchCampaigns } from '@/services/data/marketingService'
  * Campanhas da igreja da sessão sobre a base keyed-result: trocar de igreja, de papel
  * ou de conta descarta a leitura anterior. A rota /app/marketing já exige
  * `marketing.manage`; aqui a política `marketing_campaigns_read` é o limite real (o
- * SuperAdmin atravessa). O `userId` vai junto para o espelho demo aplicar a mesma
- * régua de vínculo ativo que o banco aplica — convidado não lê campanha (caso P3).
+ * SuperAdmin atravessa). O `userId` vai junto porque o espelho de teste aplica a
+ * mesma régua de vínculo ativo que o banco aplica — convidado não lê campanha (caso P3).
  */
 export function useChurchCampaigns() {
   const { session } = useAuth()

@@ -8,7 +8,7 @@ import { useDocumentMeta } from '@/hooks/useDocumentMeta'
 
 export function ResetPasswordPage() {
   useDocumentMeta({ title: 'Redefinir senha', path: '/redefinir-senha', noindex: true })
-  const { updatePassword, loading, mode } = useAuth()
+  const { updatePassword, loading } = useAuth()
   const navigate = useNavigate()
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -32,7 +32,7 @@ export function ResetPasswordPage() {
           <CheckCircle2 className="mx-auto h-10 w-10 text-green-600" />
           <p className="mt-3 font-semibold text-green-700">Senha redefinida!</p>
           <p className="mt-1 text-sm text-green-700/80">
-            {mode === 'demo' ? 'Modo demo: nenhuma senha foi alterada no provedor.' : 'Sua conta já está protegida com a nova senha.'}
+            Sua conta já está protegida com a nova senha.
           </p>
           <Button className="mt-4 w-full" onClick={() => navigate('/app', { replace: true })}>Ir para o painel</Button>
         </div>
@@ -44,9 +44,6 @@ export function ResetPasswordPage() {
           <Field label="Confirmar nova senha">
             <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
           </Field>
-          {mode === 'demo' && (
-            <p className="text-xs text-slate-400">Modo demo: nenhuma senha é alterada. Conecte o Supabase para usar o fluxo real.</p>
-          )}
           {error && <p className="text-sm text-red-600">{error}</p>}
           <Button type="submit" className="w-full" icon={<KeyRound className="h-4 w-4" />} disabled={loading}>Salvar nova senha</Button>
         </form>

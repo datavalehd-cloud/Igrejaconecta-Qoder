@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { demoRoster } from '@/services/data/rosterService'
+import { demoRoster } from '../fixtures/rosterMirror'
 
 describe('roster demo — espelha a view church_roster (0007)', () => {
   it('só devolve membros ativos da igreja pedida', () => {

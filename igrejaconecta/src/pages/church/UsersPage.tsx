@@ -101,7 +101,7 @@ export function UsersPage() {
   }
 
   async function onAccept(invitation: InvitationForMe) {
-    const result = await acceptInvitation(invitation.id, session?.profile.email)
+    const result = await acceptInvitation(invitation.id)
     setNotice(result.ok ? { tone: 'ok', text: `Você entrou na ${invitation.church_name}.` } : { tone: 'error', text: result.error ?? 'Não foi possível aceitar o convite.' })
     mine.reload()
     reload()

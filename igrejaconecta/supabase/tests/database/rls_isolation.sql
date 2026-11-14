@@ -6,7 +6,7 @@
 --   Projeto real (SQL Editor do Supabase):       cole este arquivo inteiro e execute.
 --   Projeto real (CLI, com o projeto linkado):   supabase db query --linked -f supabase/tests/database/rls_isolation.sql
 --
--- Pré-requisito no projeto real: migrações 0001..0014 + seed aplicadas. O arquivo
+-- Pré-requisito no projeto real: migrações 0001..0020 + seed aplicadas. O arquivo
 -- supabase/tests/local/shim_supabase.sql NÃO é necessário lá (auth.* e storage.*
 -- já existem) e não deve ser executado num projeto Supabase.
 --
@@ -24,6 +24,9 @@
 -- event_categories e events da Fase 3 (grupo M), event_registrations com as
 -- RPCs de inscrição, check-in e cancelamento (grupo N), church_branches e
 -- localização da Fase 4 (grupo O) e marketing_campaigns da Fase 5 (grupo P).
+-- Da rodada "sem modo demo": ministérios e redes sociais da igreja (grupo Q),
+-- favoritos e preferências do visitante (grupo R), redes de igrejas (grupo S),
+-- suporte com tickets e mensagens (grupo T) e eventos de segurança (grupo U).
 -- ============================================================================
 
 begin;
@@ -569,6 +572,91 @@ begin
   if n <> 1 then raise exception 'RLS-FALHA C16: SuperAdmin nao conseguiu atribuir o proprio papel'; end if;
 end $$;
 rollback to savepoint c16;
+
+-- C17: o gerente (manager) da propria igreja nao edita o cadastro institucional.
+-- A rota /app/igreja e a tela usam church.manage; aqui fica a prova de que o banco
+-- nao deixa passar quando o app errar.
+savepoint c17;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a2'))::text, true);
+do $$
+declare n int;
+begin
+  update public.churches set name = 'RENOMEADA PELO GERENTE' where id = current_setting('app.church_a')::uuid;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'RLS-FALHA C17: manager (a2) alterou o nome da igreja A (% linhas)', n; end if;
+  update public.churches set description = 'DESCRICAO DO GERENTE' where id = current_setting('app.church_a')::uuid;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'RLS-FALHA C17: manager (a2) alterou a descricao da igreja A (% linhas)', n; end if;
+  update public.churches set city = 'OUTRA CIDADE' where id = current_setting('app.church_a')::uuid;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'RLS-FALHA C17: manager (a2) alterou o endereco da igreja A (% linhas)', n; end if;
+end $$;
+reset role;
+do $$ begin
+  if exists (select 1 from public.churches where id = current_setting('app.church_a')::uuid
+             and (name <> 'Igreja Teste A' or description is not null or city is not null)) then
+    raise exception 'RLS-FALHA C17: o cadastro da igreja A mudou pelas maos do gerente';
+  end if;
+end $$;
+rollback to savepoint c17;
+
+-- C18: caminho legítimo da tela — church_admin grava exatamente as colunas que o
+-- perfil institucional escreve, e elas ficam. Anti-no-op: uma policy que aceita um
+-- update genérico mas rejeita coluna por coluna nao passaria por aqui.
+savepoint c18;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int; rec record;
+begin
+  update public.churches
+     set name = 'Igreja Teste A Editada',
+         description = 'Descricao gravada pela tela',
+         denomination = 'Batista',
+         email = 'nova@igreja-a.test',
+         phone = '35 3000-0000',
+         whatsapp = '5535900000000',
+         website = 'igrejatestea.test',
+         address = 'Rua B, 200',
+         city = 'Jacutinga',
+         state = 'MG',
+         zip = '37590-000',
+         lat = -23.1857,
+         lng = -45.8871
+   where id = current_setting('app.church_a')::uuid;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA C18: church_admin (a1) nao gravou o cadastro da propria igreja (% linhas)', n; end if;
+
+  select c.name, c.city, c.zip, c.lat, c.lng, c.slug, c.status, c.approval_status
+    into rec from public.churches c where c.id = current_setting('app.church_a')::uuid;
+  if rec.name <> 'Igreja Teste A Editada' or rec.city <> 'Jacutinga' or rec.zip <> '37590-000'
+     or rec.lat <> -23.1857 or rec.lng <> -45.8871 then
+    raise exception 'RLS-FALHA C18: as colunas da tela nao chegaram ao banco (name=%, city=%, lat=%)', rec.name, rec.city, rec.lat;
+  end if;
+  -- O update da tela nao toca nas colunas travadas: se alguma mudou, a escrita vazou.
+  if rec.slug <> 'teste-a' or rec.status <> 'active' or rec.approval_status <> 'approved' then
+    raise exception 'RLS-FALHA C18: o update mudou slug/status/aproval (slug=%, status=%, approval=%)', rec.slug, rec.status, rec.approval_status;
+  end if;
+end $$;
+rollback to savepoint c18;
+
+-- C19: em profiles a política é só a própria conta — o SuperAdmin não tem a
+-- exceção de escrita que tem em tudo o mais (é o que a tela "Meu perfil" depende).
+savepoint c19;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_su'))::text, true);
+do $$
+declare n int;
+begin
+  update public.profiles set phone = 'FALSO' where id = current_setting('app.user_a1')::uuid;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'RLS-FALHA C19: SuperAdmin editou o profile de a1 (% linhas)', n; end if;
+  update public.profiles set full_name = 'SuperAdmin Novo', phone = '35 99999-0000' where id = current_setting('app.user_su')::uuid;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA C19: SuperAdmin nao conseguiu gravar o proprio perfil'; end if;
+end $$;
+rollback to savepoint c19;
 
 -- ---------------------------------------------------------------------------
 -- GRUPO D — storage: pasta = igreja. Pulado se storage não existir.
@@ -3745,7 +3833,7 @@ insert into public.marketing_campaigns
    null, 'Campanha Agendada A', 'Conteudo programado.', array['facebook'],
    'scheduled', '2026-12-20T19:00:00-03:00'),
   (current_setting('app.camp_b_dra')::uuid, current_setting('app.church_b')::uuid,
-   null, 'Campanha B', 'Rascunho da igreja vizinha.', array['tiktok'], 'draft', null);
+   null, 'Campanha B', 'Rascunho da igreja vizinha.', array['whatsapp'], 'draft', null);
 
 -- Sonda anti-no-op do grupo inteiro: se as campanhas não entraram, todos os casos de
 -- "não lê" abaixo passam verdes sem medir nada.
@@ -4186,6 +4274,14 @@ begin
     raise exception 'RLS-FALHA P9: rede fora do conjunto aceita em networks';
   exception when check_violation then null; end;
 
+  -- 0020 tirou TikTok do produto: a rede deixou de ser opção na tela e de existir
+  -- no banco. Se a constraint antiga sobrevivesse por aqui, este insert passasse.
+  begin
+    insert into public.marketing_campaigns (church_id, name, networks, status)
+    values (current_setting('app.church_a')::uuid, 'Rede fora do produto', array['tiktok'], 'draft');
+    raise exception 'RLS-FALHA P9: tiktok ainda aceito em networks (0020 nao valeu)';
+  exception when check_violation then null; end;
+
   begin
     insert into public.marketing_campaigns (church_id, name, networks, status)
     values (current_setting('app.church_a')::uuid, 'Status inválido', array['whatsapp'], 'aprovada');
@@ -4195,7 +4291,7 @@ begin
   -- Sonda: o conjunto válido passa, e networks vazio também — campanha sem rede alvo
   -- definida ainda é um rascunho legítimo.
   insert into public.marketing_campaigns (church_id, name, networks, status)
-  values (current_setting('app.church_a')::uuid, 'Redes válidas', array['instagram','tiktok'], 'draft');
+  values (current_setting('app.church_a')::uuid, 'Redes válidas', array['instagram','facebook'], 'draft');
   get diagnostics n = row_count;
   if n <> 1 then raise exception 'RLS-FALHA P9: redes válidas recusadas (% linhas)', n; end if;
 
@@ -4333,6 +4429,1167 @@ begin
   end if;
 end $$;
 rollback to savepoint p9b;
+
+-- ============================================================================
+-- GRUPOS Q..U — o que as migrações 0015..0020 acrescentaram ao banco
+--
+-- Q ministérios + perfis de rede social (0015, e a guarda de líder/participante
+-- da 0021 nos casos Q9/Q9b/Q9c) · R favoritos e preferências do visitante (0016)
+-- · S redes de igrejas (0017) · T suporte (0018) ·
+-- U eventos de segurança (0019) — a 0020 (TikTok fora) é provada no P9.
+--
+-- Estes grupos existem porque as cinco telas correspondentes liam
+-- `src/data/mock.ts`. A régua é a mesma dos outros: dado de igreja não cruza
+-- igreja, papel sem a permissão não escreve, e o que a tela mostra como número
+-- (participantes, igrejas da rede, respostas do ticket) é contagem do banco.
+-- ============================================================================
+
+select set_config('app.min_a',     'a1a1a1a1-0000-4000-8000-000000000001', false);
+select set_config('app.min_a_two', 'a1a1a1a1-0000-4000-8000-000000000002', false);
+select set_config('app.min_b',     'b1b1b1b1-0000-4000-8000-000000000001', false);
+select set_config('app.soc_a',     'c1c1c1c1-0000-4000-8000-000000000001', false);
+select set_config('app.soc_b',     'c2c2c2c2-0000-4000-8000-000000000001', false);
+select set_config('app.net_a',     'd1d1d1d1-0000-4000-8000-000000000001', false);
+select set_config('app.net_b',     'd2d2d2d2-0000-4000-8000-000000000001', false);
+select set_config('app.tick_a',    'e1e1e1e1-0000-4000-8000-000000000001', false);
+select set_config('app.tick_out',  'e2e2e2e2-0000-4000-8000-000000000001', false);
+select set_config('app.msg_tick_a','e3e3e3e3-0000-4000-8000-000000000001', false);
+
+-- Fixtures entram como dono da conexão, como nos grupos anteriores.
+insert into public.ministries (id, church_id, type, name, description, leader_id) values
+  (current_setting('app.min_a')::uuid,     current_setting('app.church_a')::uuid, 'ministry',   'Ministerio de Jovens A', 'Encontros semanais.', current_setting('app.user_a1')::uuid),
+  (current_setting('app.min_a_two')::uuid, current_setting('app.church_a')::uuid, 'team',       'Equipe de Louvor A',     null,                null),
+  (current_setting('app.min_b')::uuid,     current_setting('app.church_b')::uuid, 'department', 'Secretaria B',           null,                current_setting('app.user_b1')::uuid);
+
+-- Três participantes no ministério A: é essa contagem, e não um campo digitado,
+-- que a tela de ministérios mostra.
+insert into public.ministry_members (ministry_id, user_id) values
+  (current_setting('app.min_a')::uuid, current_setting('app.user_a1')::uuid),
+  (current_setting('app.min_a')::uuid, current_setting('app.user_a2')::uuid),
+  (current_setting('app.min_a')::uuid, current_setting('app.user_a3')::uuid),
+  (current_setting('app.min_b')::uuid, current_setting('app.user_b1')::uuid);
+
+insert into public.church_social_accounts (id, church_id, network, handle) values
+  (current_setting('app.soc_a')::uuid, current_setting('app.church_a')::uuid, 'instagram', 'igreja.a'),
+  (current_setting('app.soc_b')::uuid, current_setting('app.church_b')::uuid, 'facebook',  'igreja.b');
+
+insert into public.visitor_favorites (user_id, event_id) values
+  (current_setting('app.user_a1')::uuid,  current_setting('app.event_a_pub')::uuid),
+  (current_setting('app.user_a1')::uuid,  current_setting('app.event_b_pub')::uuid),
+  (current_setting('app.user_b1')::uuid,  current_setting('app.event_b_pub')::uuid),
+  (current_setting('app.user_out')::uuid, current_setting('app.event_a_pub')::uuid);
+
+insert into public.visitor_preferences (user_id, city, interests) values
+  (current_setting('app.user_a1')::uuid, 'Sao Paulo', array['jovens']),
+  (current_setting('app.user_b1')::uuid, 'Campinas',  array['familia','mulheres']);
+
+-- net_a liga A e B (rede compartilhada); net_b é só da B — o recorte de S.
+insert into public.church_networks (id, name, slug, description) values
+  (current_setting('app.net_a')::uuid, 'Rede Teste Alfa', 'rede-teste-alfa', 'Duas igrejas.'),
+  (current_setting('app.net_b')::uuid, 'Rede Teste Beta', 'rede-teste-beta', 'So a igreja B.');
+
+insert into public.church_network_churches (network_id, church_id) values
+  (current_setting('app.net_a')::uuid, current_setting('app.church_a')::uuid),
+  (current_setting('app.net_a')::uuid, current_setting('app.church_b')::uuid),
+  (current_setting('app.net_b')::uuid, current_setting('app.church_b')::uuid);
+
+insert into public.support_tickets (id, church_id, opened_by, subject) values
+  (current_setting('app.tick_a')::uuid,   current_setting('app.church_a')::uuid, current_setting('app.user_a1')::uuid,  'Convite de membro nao chega'),
+  (current_setting('app.tick_out')::uuid, null,                                  current_setting('app.user_out')::uuid, 'Como cadastro minha igreja?');
+
+insert into public.support_messages (id, ticket_id, author_id, body) values
+  (current_setting('app.msg_tick_a')::uuid, current_setting('app.tick_a')::uuid, current_setting('app.user_a1')::uuid, 'Print anexado no e-mail de teste.');
+
+-- ---------------------------------------------------------------------------
+-- GRUPO Q — ministérios e perfis de rede social (0015)
+-- ---------------------------------------------------------------------------
+
+-- Q1: anon não vê nada. Nestas tabelas o resultado da recusa pode ser "zero
+-- linhas" ou "permission denied" (o revoke da 0015 é mais estrito que a própria
+-- RLS); os dois significam a mesma coisa para o público, e qualquer linha é falha.
+savepoint q1;
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon","sub":null}', true);
+do $$
+declare n int;
+begin
+  begin select count(*) into n from public.ministries;
+        exception when insufficient_privilege then n := 0; end;
+  if n <> 0 then raise exception 'RLS-FALHA Q1: anon leu % ministerios', n; end if;
+  begin select count(*) into n from public.ministry_members;
+        exception when insufficient_privilege then n := 0; end;
+  if n <> 0 then raise exception 'RLS-FALHA Q1: anon leu % participantes de ministerio', n; end if;
+  begin select count(*) into n from public.church_social_accounts;
+        exception when insufficient_privilege then n := 0; end;
+  if n <> 0 then raise exception 'RLS-FALHA Q1: anon leu % perfis de rede social', n; end if;
+  begin select count(*) into n from public.ministry_list;
+        exception when insufficient_privilege then n := 0; end;
+  if n <> 0 then raise exception 'RLS-FALHA Q1: anon leu % linhas da view ministry_list', n; end if;
+end $$;
+rollback to savepoint q1;
+
+-- Q2: a1 (church_admin da A e da D) lê os dois ministérios da A, com líder pelo
+-- nome e a contagem real de participantes; nada da B.
+savepoint q2;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int; c int; ld text;
+begin
+  select count(*) into n from public.ministries;
+  if n <> 2 then raise exception 'RLS-FALHA Q2: a1 deveria ver 2 ministerios (A), viu %', n; end if;
+  select count(*) into n from public.ministries where church_id = current_setting('app.church_b')::uuid;
+  if n <> 0 then raise exception 'RLS-FALHA Q2: a1 leu % ministerios da igreja B', n; end if;
+
+  select members_count, leader_name into c, ld
+    from public.ministry_list where id = current_setting('app.min_a')::uuid;
+  if c <> 3 then raise exception 'RLS-FALHA Q2: ministry_list deveria contar 3 participantes, informou %', c; end if;
+  if ld is distinct from 'Administrador A' then
+    raise exception 'RLS-FALHA Q2: leader_name esperado "Administrador A", veio %', coalesce(ld, 'null');
+  end if;
+
+  select count(*) into n from public.ministry_list;
+  if n <> 2 then raise exception 'RLS-FALHA Q2: a1 deveria ver 2 linhas na view, viu %', n; end if;
+end $$;
+rollback to savepoint q2;
+
+-- Q3: leitura é de membro; escrita é de quem tem members.manage. O gerente (a2)
+-- lê os ministérios da própria igreja e não consegue criar um.
+savepoint q3;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a2'))::text, true);
+do $$
+declare n int;
+begin
+  select count(*) into n from public.ministries;
+  if n <> 2 then raise exception 'RLS-FALHA Q3: gerente a2 deveria ler os 2 ministerios da propria igreja, leu %', n; end if;
+
+  begin
+    insert into public.ministries (church_id, name, type) values (current_setting('app.church_a')::uuid, 'Ministerio do gerente', 'ministry');
+    raise exception 'RLS-FALHA Q3: manager (sem members.manage) criou ministerio na propria igreja';
+  exception when insufficient_privilege then null; end;
+
+  -- UPDATE/DELETE sem USING não estoura: afeta zero linhas. Medir as duas
+  -- respostas é o ponto do caso — quem só esperasse erro deixaria o silêncio passar.
+  update public.ministries set name = 'Renomeado pelo gerente' where id = current_setting('app.min_a')::uuid;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'RLS-FALHA Q3: manager renomeou ministerio (% linhas)', n; end if;
+
+  delete from public.ministries where id = current_setting('app.min_a')::uuid;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'RLS-FALHA Q3: manager apagou ministerio (% linhas)', n; end if;
+
+  -- Sonda: a recusa é de permissão, não de sessão quebrada. O mesmo gerente
+  -- continua lendo os ministérios da igreja dele.
+  select count(*) into n from public.ministries;
+  if n <> 2 then raise exception 'RLS-FALHA Q3: sonda — o gerente perdeu a leitura da propria igreja (% linhas)', n; end if;
+
+  -- O mesmo gerente também não mexe nos perfis de rede: é church.manage (decisão 1).
+  begin
+    insert into public.church_social_accounts (church_id, network, handle)
+      values (current_setting('app.church_a')::uuid, 'youtube', 'canal.a');
+    raise exception 'RLS-FALHA Q3: manager cadastrou perfil de rede social da igreja';
+  exception when insufficient_privilege then null; end;
+end $$;
+rollback to savepoint q3;
+
+-- Q4: cruzar igreja nem pensar — nem lendo, nem escrevendo no ministério vizinho.
+savepoint q4;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_b1'))::text, true);
+do $$
+declare n int;
+begin
+  select count(*) into n from public.ministries where church_id = current_setting('app.church_a')::uuid;
+  if n <> 0 then raise exception 'RLS-FALHA Q4: b1 leu % ministerios da igreja A', n; end if;
+  select count(*) into n from public.church_social_accounts where church_id = current_setting('app.church_a')::uuid;
+  if n <> 0 then raise exception 'RLS-FALHA Q4: b1 leu % perfis de rede da igreja A', n; end if;
+
+  begin
+    insert into public.ministries (church_id, name, type) values (current_setting('app.church_a')::uuid, 'Ministerio invasor', 'ministry');
+    raise exception 'RLS-FALHA Q4: b1 criou ministerio na igreja A';
+  exception when insufficient_privilege then null; end;
+
+  begin
+    insert into public.ministry_members (ministry_id, user_id)
+      values (current_setting('app.min_a')::uuid, current_setting('app.user_b1')::uuid);
+    raise exception 'RLS-FALHA Q4: b1 se inscreveu como participante de um ministerio da igreja A';
+  exception when insufficient_privilege then null; end;
+end $$;
+rollback to savepoint q4;
+
+-- Q5: quem gerencia membros escreve no ministério da própria igreja, inclusive
+-- colocando gente, e a contagem da view acompanha (anti-número-digitado).
+savepoint q5;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int; c int;
+begin
+  insert into public.ministries (church_id, name, type) values (current_setting('app.church_a')::uuid, 'Ministerio novo de a1', 'team');
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA Q5: church_admin nao conseguiu criar ministerio na propria igreja'; end if;
+
+  -- Participante com gente de verdade: `ab` é membro **ativo** da A. A 0021 não
+  -- deixa colocar quem não é da igreja, então a escolha do fixture é parte do
+  -- caso (com `a4`, que é `invited`, a recusa correta passaria por falha aqui).
+  insert into public.ministry_members (ministry_id, user_id)
+    values (current_setting('app.min_a')::uuid, current_setting('app.user_ab')::uuid);
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA Q5: a1 nao conseguiu adicionar participante ao ministerio da propria igreja'; end if;
+
+  select members_count into c from public.ministry_list where id = current_setting('app.min_a')::uuid;
+  if c <> 4 then raise exception 'RLS-FALHA Q5: depois de adicionar um, a view deveria contar 4, contou %', c; end if;
+
+  delete from public.ministries where name = 'Ministerio novo de a1';
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA Q5: church_admin nao conseguiu apagar o proprio ministerio'; end if;
+end $$;
+rollback to savepoint q5;
+
+-- Q6: perfil de rede social é escrito por quem gerencia a igreja, e o @handle é
+-- a única coisa que muda.
+savepoint q6;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int; h text;
+begin
+  insert into public.church_social_accounts (church_id, network, handle)
+    values (current_setting('app.church_a')::uuid, 'whatsapp', '5511999990000');
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA Q6: church_admin nao cadastrou perfil de rede da propria igreja'; end if;
+
+  update public.church_social_accounts set handle = 'igreja.a.novo' where id = current_setting('app.soc_a')::uuid;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA Q6: church_admin nao conseguiu trocar o @handle da propria igreja'; end if;
+  select handle into h from public.church_social_accounts where id = current_setting('app.soc_a')::uuid;
+  if h <> 'igreja.a.novo' then raise exception 'RLS-FALHA Q6: handle deveria ser igreja.a.novo, veio %', h; end if;
+
+  -- Duas contas do mesmo perfil na mesma igreja: recusado pelo índice único.
+  begin
+    insert into public.church_social_accounts (church_id, network, handle)
+      values (current_setting('app.church_a')::uuid, 'whatsapp', '5511999990000');
+    raise exception 'RLS-FALHA Q6: duplicata de (igreja, rede, handle) aceita';
+  exception when unique_violation then null; end;
+end $$;
+rollback to savepoint q6;
+
+-- Q7: a guarda que importa — conectado é afirmação sobre o provedor, e quem a
+-- faz é só um backend que falou com ele. Pelo app, 42501; por service_role, passa.
+savepoint q7;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int; c boolean;
+begin
+  begin
+    update public.church_social_accounts set connected = true where id = current_setting('app.soc_a')::uuid;
+    raise exception 'RLS-FALHA Q7: authenticated marcou rede social como conectada';
+  exception when insufficient_privilege then null; end;
+
+  begin
+    insert into public.church_social_accounts (church_id, network, handle, connected)
+      values (current_setting('app.church_a')::uuid, 'youtube', 'canal.a', true);
+    raise exception 'RLS-FALHA Q7: authenticated inseriu conta ja conectada';
+  exception when insufficient_privilege then null; end;
+
+  select connected into c from public.church_social_accounts where id = current_setting('app.soc_a')::uuid;
+  if c then raise exception 'RLS-FALHA Q7: a conta apareceu conectada mesmo com a recusa'; end if;
+end $$;
+rollback to savepoint q7;
+
+savepoint q7b;
+set local role service_role;
+do $$
+declare n int; c boolean;
+begin
+  update public.church_social_accounts set connected = true where id = current_setting('app.soc_a')::uuid;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA Q7b: service_role nao conseguiu marcar a conexao (o backend legitimo ficou travado)'; end if;
+  select connected into c from public.church_social_accounts where id = current_setting('app.soc_a')::uuid;
+  if not c then raise exception 'RLS-FALHA Q7b: conectado nao ficou true para service_role'; end if;
+end $$;
+
+-- E desligar também é privilégio do backend, não do app: a conexão confirmada
+-- por provedor não pode ser editada de volta pelo aplicativo.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int; c boolean;
+begin
+  begin
+    update public.church_social_accounts set connected = false where id = current_setting('app.soc_a')::uuid;
+    raise exception 'RLS-FALHA Q7b: authenticated desligou uma conexao confirmada';
+  exception when insufficient_privilege then null; end;
+  select connected into c from public.church_social_accounts where id = current_setting('app.soc_a')::uuid;
+  if not c then raise exception 'RLS-FALHA Q7b: a conexao sumiu mesmo com a recusa'; end if;
+end $$;
+rollback to savepoint q7b;
+
+-- Q8: estrutura anti-deriva (políticas, grants, view e o CHECK de rede).
+savepoint q8;
+reset role;
+do $$
+declare n int; faltando text; faltando_arr text[];
+begin
+  select count(*) into n from pg_policies where schemaname = 'public' and tablename = 'ministries';
+  if n <> 4 then raise exception 'RLS-FALHA Q8: esperava 4 politicas em ministries, encontrei %', n; end if;
+  select count(*) into n from pg_policies where schemaname = 'public' and tablename = 'ministry_members';
+  if n <> 3 then raise exception 'RLS-FALHA Q8: esperava 3 politicas em ministry_members, encontrei %', n; end if;
+  select count(*) into n from pg_policies where schemaname = 'public' and tablename = 'church_social_accounts';
+  if n <> 4 then raise exception 'RLS-FALHA Q8: esperava 4 politicas em church_social_accounts, encontrei %', n; end if;
+
+  -- Escrita das três tabelas citando a permissão certa: ministries é equipe,
+  -- rede social é cadastro da igreja.
+  select count(*) into n from pg_policies
+  where schemaname = 'public' and tablename = 'ministries'
+    and (coalesce(qual,'') like '%members.manage%' or coalesce(with_check,'') like '%members.manage%');
+  if n <> 3 then raise exception 'RLS-FALHA Q8: % das 4 politicas de ministries nao citam members.manage (a de leitura é por vinculo)', 4 - n; end if;
+  select count(*) into n from pg_policies
+  where schemaname = 'public' and tablename = 'church_social_accounts' and cmd in ('INSERT','UPDATE','DELETE');
+  if n <> 3 then raise exception 'RLS-FALHA Q8: faltam politicas de escrita em church_social_accounts (% encontradas)', n; end if;
+  select count(*) into n from pg_policies
+  where schemaname = 'public' and tablename = 'church_social_accounts'
+    and (coalesce(qual,'') like '%church.manage%' or coalesce(with_check,'') like '%church.manage%');
+  if n <> 3 then raise exception 'RLS-FALHA Q8: % politica(s) de escrita de church_social_accounts nao citam church.manage', 3 - n; end if;
+
+  -- anon sem grant nenhum, nas três tabelas e na view.
+  select count(*) into n from information_schema.role_table_grants
+  where table_schema = 'public' and table_name in ('ministries','ministry_members','church_social_accounts','ministry_list')
+    and grantee = 'anon';
+  if n <> 0 then raise exception 'RLS-FALHA Q8: anon tem % grant(s) nas tabelas de ministerio', n; end if;
+
+  -- A view existe, é do dono e só authenticated lê.
+  select count(*) into n from information_schema.views
+  where table_schema = 'public' and table_name = 'ministry_list';
+  if n <> 1 then raise exception 'RLS-FALHA Q8: view ministry_list sumiu'; end if;
+
+  -- O trigger que segura a conexão está BEFORE INSERT OR UPDATE OF connected.
+  select count(*) into n from pg_trigger t
+  where t.tgrelid = 'public.church_social_accounts'::regclass and t.tgname = 'trg_church_social_accounts_connection'
+    and t.tgfoid = 'public.enforce_social_connection()'::regprocedure and not t.tgisinternal
+    and (t.tgtype & 1) = 1 and (t.tgtype & 2) = 2 and (t.tgtype & 4) = 4 and (t.tgtype & 16) = 16;
+  if n <> 1 then raise exception 'RLS-FALHA Q8: trg_church_social_accounts_connection nao esta como BEFORE INSERT OR UPDATE de linha'; end if;
+
+  select array(select a.attname from unnest(t.tgattr) as x(attnum)
+                 join pg_attribute a on a.attrelid = t.tgrelid and a.attnum = x.attnum order by 1) into faltando_arr
+  from pg_trigger t where t.tgrelid = 'public.church_social_accounts'::regclass
+    and t.tgname = 'trg_church_social_accounts_connection';
+  if array_to_string(faltando_arr, ',') <> 'connected' then
+    raise exception 'RLS-FALHA Q8: o trigger de conexao vigia % — esperava connected', coalesce(array_to_string(faltando_arr, ','), 'nenhuma coluna');
+  end if;
+
+  -- CHECK de network: o conjunto novo, sem tiktok.
+  select count(*) into n from pg_constraint
+  where contype = 'c' and conrelid = 'public.church_social_accounts'::regclass
+    and pg_get_constraintdef(oid) like '%instagram%';
+  if n <> 1 then raise exception 'RLS-FALHA Q8: CHECK de network sumiu de church_social_accounts'; end if;
+  if exists (select 1 from pg_constraint where conrelid = 'public.church_social_accounts'::regclass
+             and pg_get_constraintdef(oid) like '%tiktok%') then
+    raise exception 'RLS-FALHA Q8: church_social_accounts ainda aceita tiktok';
+  end if;
+
+  -- Colunas que o serviço projeta.
+  select string_agg(f, ', ' order by f) into faltando
+  from unnest(array['id','church_id','type','name','description','leader_id','created_at','updated_at']) f
+  where not exists (select 1 from information_schema.columns c
+                    where c.table_schema='public' and c.table_name='ministries' and c.column_name=f);
+  if faltando is not null then raise exception 'RLS-FALHA Q8: colunas sumiram de ministries: %', faltando; end if;
+end $$;
+rollback to savepoint q8;
+
+-- Q9: a guarda de audiência da 0021. A view `ministry_list` é
+-- `security_invoker = false` (mesma razão do `church_roster`), então o join que
+-- forma `leader_name` não passa pela RLS de `profiles` — que pela 0002 só deixa
+-- cada um ler a si mesmo. Sem a guarda, quem tem `members.manage` escrevia um
+-- uuid alheio em `leader_id` e a tela devolvia o nome daquela pessoa: um oráculo
+-- "uuid para nome" sobre outras igrejas e sobre qualquer conta da plataforma.
+savepoint q9;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int; ld text;
+begin
+  begin
+    update public.ministries set leader_id = current_setting('app.user_b1')::uuid
+      where id = current_setting('app.min_a')::uuid;
+    raise exception 'RLS-FALHA Q9: leader de outra igreja aceito no update';
+  exception when insufficient_privilege then null; end;
+
+  begin
+    insert into public.ministries (church_id, name, type, leader_id)
+      values (current_setting('app.church_a')::uuid, 'Ministerio com lider de fora', 'team',
+              current_setting('app.user_b1')::uuid);
+    raise exception 'RLS-FALHA Q9: leader de outra igreja aceito no insert';
+  exception when insufficient_privilege then null; end;
+
+  begin
+    insert into public.ministry_members (ministry_id, user_id)
+      values (current_setting('app.min_a')::uuid, current_setting('app.user_b1')::uuid);
+    raise exception 'RLS-FALHA Q9: participante de outra igreja aceito';
+  exception when insufficient_privilege then null; end;
+
+  -- Convidada A tem papel de manager na A, mas o vínculo é `invited`: antes do
+  -- aceite ela ainda não é audiência de ninguém. É o caso que obriga a guarda a
+  -- ler o `status`, não só a existence do vínculo.
+  begin
+    insert into public.ministries (church_id, name, type, leader_id)
+      values (current_setting('app.church_a')::uuid, 'Ministerio com lider convidada', 'team',
+              current_setting('app.user_a4')::uuid);
+    raise exception 'RLS-FALHA Q9: leader invited aceito na propria igreja';
+  exception when insufficient_privilege then null; end;
+
+  begin
+    insert into public.ministry_members (ministry_id, user_id)
+      values (current_setting('app.min_a')::uuid, current_setting('app.user_a4')::uuid);
+    raise exception 'RLS-FALHA Q9: participante invited aceito no ministerio da A';
+  exception when insufficient_privilege then null; end;
+
+  -- Sem vínculo nenhum com a A também não entra: a régua é da igreja do
+  -- ministério, não "qualquer conta da plataforma".
+  begin
+    insert into public.ministry_members (ministry_id, user_id)
+      values (current_setting('app.min_a')::uuid, current_setting('app.user_out')::uuid);
+    raise exception 'RLS-FALHA Q9: conta sem vinculo virou participante do ministerio da A';
+  exception when insufficient_privilege then null; end;
+
+  -- uuid que não é conta nenhuma: referência quebrada, não audiência.
+  begin
+    update public.ministries set leader_id = 'ffffffff-ffff-4fff-8fff-ffffffffffff'::uuid
+      where id = current_setting('app.min_a')::uuid;
+    raise exception 'RLS-FALHA Q9: leader que nao e conta aceito';
+  exception when foreign_key_violation then null; end;
+
+  -- O nome que a igreja vê continua sendo o de dentro da própria igreja.
+  select leader_name into ld from public.ministry_list where id = current_setting('app.min_a')::uuid;
+  if ld is distinct from 'Administrador A' then
+    raise exception 'RLS-FALHA Q9: depois das recusas o leader_name virou %', coalesce(ld, 'null');
+  end if;
+  select count(*) into n from public.ministries
+    where name in ('Ministerio com lider de fora', 'Ministerio com lider convidada');
+  if n <> 0 then raise exception 'RLS-FALHA Q9: % ministerio(s) recusado(s) ficaram na tabela', n; end if;
+  select count(*) into n from public.ministry_members
+    where ministry_id = current_setting('app.min_a')::uuid
+      and user_id in (current_setting('app.user_b1')::uuid,
+                      current_setting('app.user_out')::uuid,
+                      current_setting('app.user_a4')::uuid);
+  if n <> 0 then raise exception 'RLS-FALHA Q9: % participante(s) de fora ficaram na tabela', n; end if;
+end $$;
+rollback to savepoint q9;
+
+-- Q9b: sonda anti-no-op — a guarda não virou bloqueio geral. A mesma pessoa, com
+-- a mesma escrita, passa quando é gente da própria igreja.
+savepoint q9b;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int; c int; ld text; novo uuid;
+begin
+  insert into public.ministries (church_id, name, type, leader_id)
+    values (current_setting('app.church_a')::uuid, 'Ministerio sonda de a1', 'team',
+            current_setting('app.user_a2')::uuid)
+    returning id into novo;
+  if novo is null then raise exception 'RLS-FALHA Q9b: ministerio legitimo nao foi criado'; end if;
+
+  select leader_name into ld from public.ministry_list where id = novo;
+  if ld is distinct from 'Gerente A' then
+    raise exception 'RLS-FALHA Q9b: o lider legitimo nao apareceu na view (veio %)', coalesce(ld, 'null');
+  end if;
+
+  insert into public.ministry_members (ministry_id, user_id)
+    values (current_setting('app.min_a_two')::uuid, current_setting('app.user_a2')::uuid);
+  select members_count into c from public.ministry_list where id = current_setting('app.min_a_two')::uuid;
+  if c <> 1 then raise exception 'RLS-FALHA Q9b: participante legitimo nao entrou na contagem (contou %)', c; end if;
+
+  select count(*) into n from public.ministries where id = novo;
+  if n <> 1 then raise exception 'RLS-FALHA Q9b: a leitura da propria igreja nao encontra o ministerio criado'; end if;
+end $$;
+rollback to savepoint q9b;
+
+-- Q9c: estrutura da 0021 — os dois triggers existem, vigiam as colunas certas e
+-- as funções continuam DEFINER com search_path fixo e sem EXECUTE para o app.
+savepoint q9c;
+reset role;
+do $$
+declare n int; watched text[];
+begin
+  select count(*) into n from pg_trigger t
+  where t.tgrelid = 'public.ministries'::regclass and t.tgname = 'trg_ministries_leader'
+    and t.tgfoid = 'public.enforce_ministry_leader()'::regprocedure and not t.tgisinternal
+    -- bits de tgtype: ROW=1, BEFORE=2, INSERT=4, UPDATE=16
+    and (t.tgtype & 1) = 1 and (t.tgtype & 2) = 2 and (t.tgtype & 4) = 4 and (t.tgtype & 16) = 16;
+  if n <> 1 then raise exception 'RLS-FALHA Q9c: trg_ministries_leader nao esta como BEFORE INSERT OR UPDATE de linha'; end if;
+
+  select array(select a.attname from unnest(t.tgattr) as x(attnum)
+                 join pg_attribute a on a.attrelid = t.tgrelid and a.attnum = x.attnum order by 1) into watched
+  from pg_trigger t where t.tgrelid = 'public.ministries'::regclass
+    and t.tgname = 'trg_ministries_leader';
+  if watched is distinct from array['church_id','leader_id'] then
+    raise exception 'RLS-FALHA Q9c: o trigger de lider vigia % — esperava church_id,leader_id',
+      coalesce(array_to_string(watched, ','), 'nenhuma coluna');
+  end if;
+
+  select count(*) into n from pg_trigger t
+  where t.tgrelid = 'public.ministry_members'::regclass and t.tgname = 'trg_ministry_members_member'
+    and t.tgfoid = 'public.enforce_ministry_member()'::regprocedure and not t.tgisinternal
+    and (t.tgtype & 1) = 1 and (t.tgtype & 2) = 2 and (t.tgtype & 4) = 4;
+  if n <> 1 then raise exception 'RLS-FALHA Q9c: trg_ministry_members_member nao esta como BEFORE INSERT de linha'; end if;
+
+  select count(*) into n from pg_proc p
+  join pg_namespace ns on ns.oid = p.pronamespace
+  where ns.nspname = 'public'
+    and p.proname in ('enforce_ministry_leader','enforce_ministry_member')
+    and p.prosecdef and p.proconfig @> array['search_path=public'];
+  if n <> 2 then raise exception 'RLS-FALHA Q9c: % das 2 funcoes de guarda esta DEFINER com search_path fixo', n; end if;
+
+  if has_function_privilege('anon', 'public.enforce_ministry_leader()', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.enforce_ministry_leader()', 'EXECUTE')
+     or has_function_privilege('anon', 'public.enforce_ministry_member()', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.enforce_ministry_member()', 'EXECUTE') then
+    raise exception 'RLS-FALHA Q9c: anon/authenticated recuperou EXECUTE nas funcoes da 0021';
+  end if;
+end $$;
+rollback to savepoint q9c;
+
+-- ---------------------------------------------------------------------------
+-- GRUPO R — favoritos e preferências do visitante (0016)
+-- ---------------------------------------------------------------------------
+
+savepoint r1;
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon","sub":null}', true);
+do $$
+declare n int;
+begin
+  begin select count(*) into n from public.visitor_favorites;
+        exception when insufficient_privilege then n := 0; end;
+  if n <> 0 then raise exception 'RLS-FALHA R1: anon leu % favoritos', n; end if;
+  begin select count(*) into n from public.visitor_preferences;
+        exception when insufficient_privilege then n := 0; end;
+  if n <> 0 then raise exception 'RLS-FALHA R1: anon leu % preferencias', n; end if;
+end $$;
+rollback to savepoint r1;
+
+-- R2: cada um vê só a própria lista — inclusive quem não tem vínculo nenhum.
+savepoint r2;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_out'))::text, true);
+do $$
+declare n int;
+begin
+  select count(*) into n from public.visitor_favorites;
+  if n <> 1 then raise exception 'RLS-FALHA R2: visitante sem vinculo deveria ver 1 favorito proprio, viu %', n; end if;
+  select count(*) into n from public.visitor_favorites f
+    where f.user_id in (current_setting('app.user_a1')::uuid, current_setting('app.user_b1')::uuid);
+  if n <> 0 then raise exception 'RLS-FALHA R2: visitante leu % favoritos de outras contas', n; end if;
+end $$;
+rollback to savepoint r2;
+
+savepoint r2b;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int;
+begin
+  select count(*) into n from public.visitor_favorites;
+  if n <> 2 then raise exception 'RLS-FALHA R2b: a1 deveria ver os 2 favoritos dele, viu %', n; end if;
+  select count(*) into n from public.visitor_preferences;
+  if n <> 1 then raise exception 'RLS-FALHA R2b: a1 deveria ver 1 preferencia propria, viu %', n; end if;
+end $$;
+rollback to savepoint r2b;
+
+-- R3: escrever na lista do outro é recusado na cláusula WITH CHECK, e apagar o
+-- favorito alheio não apaga nada (0 linhas, não erro — é o que a RLS faz).
+savepoint r3;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int;
+begin
+  begin
+    insert into public.visitor_favorites (user_id, event_id)
+      values (current_setting('app.user_b1')::uuid, current_setting('app.event_a_pub')::uuid);
+    raise exception 'RLS-FALHA R3: a1 inseriu favorito na lista de b1';
+  exception when insufficient_privilege then null; end;
+
+  delete from public.visitor_favorites
+   where user_id = current_setting('app.user_b1')::uuid
+     and event_id = current_setting('app.event_b_pub')::uuid;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'RLS-FALHA R3: a1 apagou % favorito(s) de b1', n; end if;
+
+  begin
+    insert into public.visitor_preferences (user_id, city, interests)
+      values (current_setting('app.user_b1')::uuid, 'Bauru', array['jovens']);
+    raise exception 'RLS-FALHA R3: a1 gravou preferencia na conta de b1';
+  exception when insufficient_privilege then null; end;
+end $$;
+rollback to savepoint r3;
+
+-- R4: o caminho honesto funciona — salvar na própria lista, trocar a própria
+-- cidade — e interesse fora do conjunto não entra.
+savepoint r4;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int; c text;
+begin
+  insert into public.visitor_favorites (user_id, event_id)
+    values (current_setting('app.user_a1')::uuid, current_setting('app.event_a_pri')::uuid);
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA R4: a1 nao conseguiu favoritar um evento na propria lista'; end if;
+
+  update public.visitor_preferences set city = 'Sorocaba' where user_id = current_setting('app.user_a1')::uuid;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA R4: a1 nao conseguiu atualizar a propria cidade'; end if;
+  select city into c from public.visitor_preferences where user_id = current_setting('app.user_a1')::uuid;
+  if c <> 'Sorocaba' then raise exception 'RLS-FALHA R4: cidade deveria ser Sorocaba, veio %', c; end if;
+
+  begin
+    update public.visitor_preferences set interests = array['futbol'] where user_id = current_setting('app.user_a1')::uuid;
+    raise exception 'RLS-FALHA R4: interesse fora do conjunto foi aceito';
+  exception when check_violation then null; end;
+end $$;
+rollback to savepoint r4;
+
+-- R5: estrutura — uma política `for all` por tabela self, sem update de
+-- favoritos (não há o que atualizar) e sem grant para anon.
+savepoint r5;
+reset role;
+do $$
+declare n int;
+begin
+  select count(*) into n from pg_policies where schemaname='public' and tablename='visitor_favorites';
+  if n <> 1 then raise exception 'RLS-FALHA R5: esperava 1 politica em visitor_favorites, achei %', n; end if;
+  select count(*) into n from pg_policies where schemaname='public' and tablename='visitor_favorites'
+    and cmd = 'ALL' and coalesce(qual,'') like '%auth.uid()%' and coalesce(with_check,'') like '%auth.uid()%';
+  if n <> 1 then raise exception 'RLS-FALHA R5: a politica de visitor_favorites nao e a `for all` com user_id = auth.uid()'; end if;
+
+  select count(*) into n from pg_policies where schemaname='public' and tablename='visitor_preferences';
+  if n <> 3 then raise exception 'RLS-FALHA R5: esperava 3 politicas em visitor_preferences, achei %', n; end if;
+
+  select count(*) into n from information_schema.role_table_grants
+  where table_schema='public' and table_name in ('visitor_favorites','visitor_preferences') and grantee='anon';
+  if n <> 0 then raise exception 'RLS-FALHA R5: anon tem % grant(s) nas tabelas de visitante', n; end if;
+
+  select count(*) into n from information_schema.role_table_grants
+  where table_schema='public' and table_name='visitor_favorites' and privilege_type='UPDATE' and grantee='authenticated';
+  if n <> 0 then raise exception 'RLS-FALHA R5: apareceu grant de UPDATE em visitor_favorites (% linha(s))', n; end if;
+
+  if exists (select 1 from pg_constraint where conrelid='public.visitor_preferences'::regclass
+             and pg_get_constraintdef(oid) like '%tiktok%') then
+    raise exception 'RLS-FALHA R5: CHECK de interesses mentions tiktok (nao era pra existir)';
+  end if;
+end $$;
+rollback to savepoint r5;
+
+-- ---------------------------------------------------------------------------
+-- GRUPO S — redes de igrejas / organizações (0017)
+-- ---------------------------------------------------------------------------
+
+-- S1: o SuperAdmin cria rede e associa igreja — é a única audiência que pode.
+savepoint s1;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_su'))::text, true);
+do $$
+declare n int; c int;
+begin
+  insert into public.church_networks (name, slug, description) values ('Rede do SuperAdmin', 'rede-do-superadmin', 'criada no caso S1');
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA S1: superadmin nao conseguiu criar rede'; end if;
+
+  insert into public.church_network_churches (network_id, church_id)
+    select id, current_setting('app.church_d')::uuid from public.church_networks where slug = 'rede-do-superadmin';
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA S1: superadmin nao conseguiu associar a igreja D'; end if;
+
+  select churches_count into c from public.church_network_list where slug = 'rede-do-superadmin';
+  if c <> 1 then raise exception 'RLS-FALHA S1: a rede nova deveria contar 1 igreja, contou %', coalesce(c::text, 'null'); end if;
+
+  delete from public.church_network_churches
+   where network_id = (select id from public.church_networks where slug = 'rede-do-superadmin');
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA S1: superadmin nao conseguiu desfazer a associacao'; end if;
+end $$;
+rollback to savepoint s1;
+
+-- S2: o recorte do membro. a1 pertence a uma rede compartilhada (net_a) e não
+-- pertence à rede vizinha (net_b): vê a primeira, não a segunda.
+savepoint s2;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int;
+begin
+  select count(*) into n from public.church_network_list;
+  if n <> 1 then raise exception 'RLS-FALHA S2: a1 deveria ver 1 rede (a dele), viu %', n; end if;
+  if exists (select 1 from public.church_network_list where id = current_setting('app.net_b')::uuid) then
+    raise exception 'RLS-FALHA S2: a1 viu a rede exclusiva da igreja B';
+  end if;
+
+  select count(*) into n from public.church_network_churches where network_id = current_setting('app.net_b')::uuid;
+  if n <> 0 then raise exception 'RLS-FALHA S2: a1 leu % associacoes da rede alheia net_b', n; end if;
+
+  -- Dentro da própria rede, as associações são visíveis: as igrejas aprovadas já
+  -- são públicas (churches_public_read), então isto não abre nada que não soubéssemos.
+  select churches_count into n from public.church_network_list where id = current_setting('app.net_a')::uuid;
+  if n <> 2 then raise exception 'RLS-FALHA S2: net_a deveria contar 2 igrejas, contou %', n; end if;
+end $$;
+rollback to savepoint s2;
+
+-- S3: membro de igreja não cria rede, não se autoassocia e não desassocia.
+savepoint s3;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int;
+begin
+  begin
+    insert into public.church_networks (name, slug) values ('Rede da igreja A', 'rede-da-igreja-a');
+    raise exception 'RLS-FALHA S3: church_admin criou rede de igrejas';
+  exception when insufficient_privilege then null; end;
+
+  begin
+    insert into public.church_network_churches (network_id, church_id)
+      values (current_setting('app.net_b')::uuid, current_setting('app.church_a')::uuid);
+    raise exception 'RLS-FALHA S3: a1 se associou por conta propria a uma rede';
+  exception when insufficient_privilege then null; end;
+
+  delete from public.church_network_churches
+   where network_id = current_setting('app.net_a')::uuid and church_id = current_setting('app.church_b')::uuid;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'RLS-FALHA S3: a1 removeu % igreja(s) da rede compartilhada', n; end if;
+end $$;
+rollback to savepoint s3;
+
+-- S4: anônimo não vê rede nenhuma; visitante sem vínculo também não.
+savepoint s4;
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon","sub":null}', true);
+do $$
+declare n int;
+begin
+  begin select count(*) into n from public.church_networks;
+        exception when insufficient_privilege then n := 0; end;
+  if n <> 0 then raise exception 'RLS-FALHA S4: anon leu % redes de igrejas', n; end if;
+  begin select count(*) into n from public.church_network_churches;
+        exception when insufficient_privilege then n := 0; end;
+  if n <> 0 then raise exception 'RLS-FALHA S4: anon leu % associacoes', n; end if;
+  begin select count(*) into n from public.church_network_list;
+        exception when insufficient_privilege then n := 0; end;
+  if n <> 0 then raise exception 'RLS-FALHA S4: anon leu % linhas da view de redes', n; end if;
+end $$;
+rollback to savepoint s4;
+
+savepoint s4b;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_out'))::text, true);
+do $$
+declare n int;
+begin
+  select count(*) into n from public.church_network_list;
+  if n <> 0 then raise exception 'RLS-FALHA S4b: sem vinculo viu % redes (nao tem igreja em nenhuma)', n; end if;
+end $$;
+rollback to savepoint s4b;
+
+-- S5: estrutura — escrita exclusiva de SuperAdmin nas duas tabelas, slug único e
+-- com formato de URL, e a função de recorte é SECURITY DEFINER com search_path.
+savepoint s5;
+reset role;
+do $$
+declare n int; pinned boolean; found boolean;
+begin
+  select count(*) into n from pg_policies where schemaname='public' and tablename='church_networks';
+  if n <> 4 then raise exception 'RLS-FALHA S5: esperava 4 politicas em church_networks, achei %', n; end if;
+  select count(*) into n from pg_policies where schemaname='public' and tablename='church_network_churches';
+  if n <> 3 then raise exception 'RLS-FALHA S5: esperava 3 politicas em church_network_churches, achei %', n; end if;
+
+  select count(*) into n from pg_policies
+  where schemaname='public' and tablename='church_networks' and cmd in ('INSERT','UPDATE','DELETE')
+    and (coalesce(with_check,'') like '%is_superadmin()%' or coalesce(qual,'') like '%is_superadmin()%');
+  if n <> 3 then raise exception 'RLS-FALHA S5: % politica(s) de escrita de rede nao exigem is_superadmin()', 3 - n; end if;
+
+  select count(*) into n from information_schema.role_table_grants
+  where table_schema='public' and table_name in ('church_networks','church_network_churches','church_network_list') and grantee='anon';
+  if n <> 0 then raise exception 'RLS-FALHA S5: anon tem % grant(s) nas tabelas de rede', n; end if;
+
+  select exists (select 1 from pg_proc p join pg_namespace ns on ns.oid=p.pronamespace
+                 where ns.nspname='public' and p.proname='current_network_ids'),
+         (p.proconfig @> array['search_path=public']::text[])
+    into found, pinned
+  from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+  where ns.nspname = 'public' and p.proname = 'current_network_ids';
+  if not found then raise exception 'RLS-FALHA S5: current_network_ids() sumiu de public'; end if;
+  if not pinned then raise exception 'RLS-FALHA S5: current_network_ids() sem search_path fixo'; end if;
+
+  -- Slug: único e no formato de URL.
+  begin
+    insert into public.church_networks (name, slug) values ('Duplicado', 'rede-teste-alfa');
+    raise exception 'RLS-FALHA S5: slug duplicado aceito em church_networks';
+  exception when unique_violation then null; end;
+  begin
+    insert into public.church_networks (name, slug) values ('Fora de formato', 'Rede com Espaco');
+    raise exception 'RLS-FALHA S5: slug fora do formato aceito';
+  exception when check_violation then null; end;
+end $$;
+rollback to savepoint s5;
+
+-- ---------------------------------------------------------------------------
+-- GRUPO T — suporte: tickets e mensagens (0018)
+-- ---------------------------------------------------------------------------
+
+-- T1: quem abriu vê; vizinho não; SuperAdmin vê tudo.
+savepoint t1;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int;
+begin
+  select count(*) into n from public.support_tickets;
+  if n <> 1 then raise exception 'RLS-FALHA T1: a1 deveria ver 1 ticket (o dele), viu %', n; end if;
+  select count(*) into n from public.support_ticket_list;
+  if n <> 1 then raise exception 'RLS-FALHA T1: a view deveria devolver 1 ticket para a1, devolveu %', n; end if;
+  select messages_count into n from public.support_ticket_list where id = current_setting('app.tick_a')::uuid;
+  if n <> 1 then raise exception 'RLS-FALHA T1: a contagem de respostas do ticket deveria ser 1, veio %', n; end if;
+end $$;
+rollback to savepoint t1;
+
+savepoint t1b;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_b1'))::text, true);
+do $$
+declare n int;
+begin
+  select count(*) into n from public.support_tickets;
+  if n <> 0 then raise exception 'RLS-FALHA T1b: b1 leu % ticket(s) da igreja A', n; end if;
+  select count(*) into n from public.support_messages;
+  if n <> 0 then raise exception 'RLS-FALHA T1b: b1 leu % mensagens do ticket alheio', n; end if;
+end $$;
+rollback to savepoint t1b;
+
+savepoint t1c;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_su'))::text, true);
+do $$
+declare n int; nm_igreja text; nm_autor text;
+begin
+  select count(*) into n from public.support_ticket_list;
+  if n <> 2 then raise exception 'RLS-FALHA T1c: superadmin deveria ver os 2 tickets, viu %', n; end if;
+  select church_name, opened_by_name into nm_igreja, nm_autor
+  from public.support_ticket_list where id = current_setting('app.tick_a')::uuid;
+  if nm_igreja is null then raise exception 'RLS-FALHA T1c: a view nao projeta a igreja do ticket para o superadmin'; end if;
+  if nm_autor is null then raise exception 'RLS-FALHA T1c: a view nao projeta o nome de quem abriu o ticket'; end if;
+end $$;
+rollback to savepoint t1c;
+
+-- T2: audiência apertada de propósito — gerente da MESMA igreja não é quem
+-- gerencia a igreja, então não lê o ticket de um membro dela.
+savepoint t2;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a2'))::text, true);
+do $$
+declare n int;
+begin
+  select count(*) into n from public.support_tickets;
+  if n <> 0 then raise exception 'RLS-FALHA T2: manager (sem church.manage) leu % ticket(s) da propria igreja', n; end if;
+  select count(*) into n from public.support_messages;
+  if n <> 0 then raise exception 'RLS-FALHA T2: manager leu % mensagens do ticket de a1', n; end if;
+end $$;
+rollback to savepoint t2;
+
+-- T3: abrir chamado — o autor é quem está logado, e a igreja do assunto tem de
+-- ser a sua. Visitante sem vínculo abre sem igreja.
+savepoint t3;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int;
+begin
+  insert into public.support_tickets (church_id, opened_by, subject)
+    values (current_setting('app.church_a')::uuid, current_setting('app.user_a1')::uuid, 'Problema no check-in');
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA T3: a1 nao conseguiu abrir chamado da propria igreja'; end if;
+
+  begin
+    insert into public.support_tickets (church_id, opened_by, subject)
+      values (current_setting('app.church_b')::uuid, current_setting('app.user_a1')::uuid, 'Sobre a igreja vizinha');
+    raise exception 'RLS-FALHA T3: a1 abriu ticket sobre a igreja B';
+  exception when insufficient_privilege then null; end;
+
+  begin
+    insert into public.support_tickets (church_id, opened_by, subject)
+      values (null, current_setting('app.user_b1')::uuid, 'Forjando o autor');
+    raise exception 'RLS-FALHA T3: a1 abriu ticket em nome de b1';
+  exception when insufficient_privilege then null; end;
+end $$;
+rollback to savepoint t3;
+
+savepoint t3b;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_out'))::text, true);
+do $$
+declare n int;
+begin
+  select count(*) into n from public.support_tickets;
+  if n <> 1 then raise exception 'RLS-FALHA T3b: visitante sem vinculo deveria ver 1 ticket (o dele), viu %', n; end if;
+  insert into public.support_tickets (church_id, opened_by, subject)
+    values (null, current_setting('app.user_out')::uuid, 'Como cadastro minha igreja? parte 2');
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA T3b: visitante sem vinculo nao conseguiu abrir chamado'; end if;
+end $$;
+rollback to savepoint t3b;
+
+-- T4: responder. No próprio ticket todo mundo do direito pode; no alheio, não.
+savepoint t4;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int;
+begin
+  insert into public.support_messages (ticket_id, author_id, body)
+    values (current_setting('app.tick_a')::uuid, current_setting('app.user_a1')::uuid, 'Complemento do autor.');
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA T4: autor nao conseguiu responder no proprio ticket'; end if;
+
+  begin
+    insert into public.support_messages (ticket_id, author_id, body)
+      values (current_setting('app.tick_out')::uuid, current_setting('app.user_a1')::uuid, 'Resposta indevida');
+    raise exception 'RLS-FALHA T4: a1 respondeu no ticket de outra pessoa';
+  exception when insufficient_privilege then null; end;
+end $$;
+rollback to savepoint t4;
+
+savepoint t4b;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_su'))::text, true);
+do $$
+declare n int; st text;
+begin
+  insert into public.support_messages (ticket_id, author_id, body)
+    values (current_setting('app.tick_a')::uuid, current_setting('app.user_su')::uuid, 'Suporte respondeu.');
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA T4b: superadmin nao conseguiu responder ao ticket'; end if;
+
+  update public.support_tickets set status = 'answered' where id = current_setting('app.tick_a')::uuid;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA T4b: superadmin nao conseguiu marcar o ticket como respondido'; end if;
+  select status into st from public.support_tickets where id = current_setting('app.tick_a')::uuid;
+  if st <> 'answered' then raise exception 'RLS-FALHA T4b: status deveria ser answered, veio %', st; end if;
+end $$;
+rollback to savepoint t4b;
+
+-- T5: fechar por quem abriu, e nada de apagar suporte.
+savepoint t5;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int; st text;
+begin
+  update public.support_tickets set status = 'closed' where id = current_setting('app.tick_a')::uuid;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA T5: autor nao conseguiu fechar o proprio ticket'; end if;
+  select status into st from public.support_tickets where id = current_setting('app.tick_a')::uuid;
+  if st <> 'closed' then raise exception 'RLS-FALHA T5: status esperado closed, veio %', st; end if;
+
+  -- Ticket alheio não aparece para UPDATE: a recusa é zero linhas, não erro.
+  update public.support_tickets set status = 'closed' where id = current_setting('app.tick_out')::uuid;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'RLS-FALHA T5: a1 fechou o ticket de outra pessoa (% linhas)', n; end if;
+
+  begin
+    delete from public.support_tickets where id = current_setting('app.tick_a')::uuid;
+    raise exception 'RLS-FALHA T5: delete de ticket foi aceito pelo papel';
+  exception when insufficient_privilege then null; end;
+
+  begin
+    delete from public.support_messages where id = current_setting('app.msg_tick_a')::uuid;
+    raise exception 'RLS-FALHA T5: delete de mensagem do suporte foi aceito';
+  exception when insufficient_privilege then null; end;
+
+  select count(*) into n from public.support_messages where ticket_id = current_setting('app.tick_a')::uuid;
+  if n <> 1 then raise exception 'RLS-FALHA T5: depois das recusas, o ticket deveria manter 1 mensagem, tem %', n; end if;
+end $$;
+rollback to savepoint t5;
+
+-- T6: estrutura — sem delete, sem grant para anon, e `can_read_ticket` é
+-- SECURITY DEFINER com search_path fixo (é a porta das duas tabelas).
+savepoint t6;
+reset role;
+do $$
+declare n int; pinned boolean; found boolean; definer boolean;
+begin
+  select count(*) into n from pg_policies where schemaname='public' and tablename='support_tickets';
+  if n <> 3 then raise exception 'RLS-FALHA T6: esperava 3 politicas em support_tickets, achei %', n; end if;
+  select count(*) into n from pg_policies where schemaname='public' and tablename='support_messages';
+  if n <> 2 then raise exception 'RLS-FALHA T6: esperava 2 politicas em support_messages, achei %', n; end if;
+
+  select count(*) into n from pg_policies
+  where schemaname='public' and tablename in ('support_tickets','support_messages') and cmd = 'DELETE';
+  if n <> 0 then raise exception 'RLS-FALHA T6: apareceu % politica(s) de delete no suporte', n; end if;
+
+  -- Sem política de delete não basta: sem grant de delete também, senão o
+  -- comando passa direto pela tabela e a trilha de suporte deixa de ser trilha.
+  select count(*) into n from information_schema.role_table_grants
+  where table_schema='public' and table_name in ('support_tickets','support_messages')
+    and grantee='authenticated' and privilege_type = 'DELETE';
+  if n <> 0 then raise exception 'RLS-FALHA T6: authenticated tem grant de DELETE no suporte (% linha(s))', n; end if;
+
+  select count(*) into n from information_schema.role_table_grants
+  where table_schema='public' and table_name in ('support_tickets','support_messages','support_ticket_list')
+    and grantee='anon';
+  if n <> 0 then raise exception 'RLS-FALHA T6: anon tem % grant(s) nas tabelas de suporte', n; end if;
+
+  select count(*) into n from information_schema.views
+  where table_schema='public' and table_name = 'support_ticket_list';
+  if n <> 1 then raise exception 'RLS-FALHA T6: a view support_ticket_list sumiu'; end if;
+
+  select exists (select 1 from pg_proc p join pg_namespace ns on ns.oid=p.pronamespace
+                 where ns.nspname='public' and p.proname='can_read_ticket'),
+         (p.prosecdef),
+         (p.proconfig @> array['search_path=public']::text[])
+    into found, definer, pinned
+  from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+  where ns.nspname = 'public' and p.proname = 'can_read_ticket';
+  if not found then raise exception 'RLS-FALHA T6: can_read_ticket() sumiu de public'; end if;
+  if not definer then raise exception 'RLS-FALHA T6: can_read_ticket() deixou de ser SECURITY DEFINER (a politica de support_messages para de funcionar)'; end if;
+  if not pinned then raise exception 'RLS-FALHA T6: can_read_ticket() sem search_path fixo'; end if;
+
+  -- A regra de audiência está escrita na função, na view e na política: se uma
+  -- das três for afrouxada de volta para "qualquer membro da igreja", este caso
+  -- falha antes de o código chegar na tela.
+  select count(*) into n
+  from (
+    select pg_get_functiondef(p.oid) as src from pg_proc p
+     where p.proname = 'can_read_ticket'
+    union all
+    select pg_get_viewdef('public.support_ticket_list'::regclass, true)
+    union all
+    select coalesce(qual,'') from pg_policies
+     where schemaname='public' and tablename='support_tickets' and cmd='SELECT'
+  ) s
+  where s.src like '%church.manage%';
+  if n <> 3 then raise exception 'RLS-FALHA T6: % dos 3 lugares da audiencia do suporte nao citam church.manage', n; end if;
+end $$;
+rollback to savepoint t6;
+
+-- ---------------------------------------------------------------------------
+-- GRUPO U — eventos de segurança (0019)
+-- ---------------------------------------------------------------------------
+
+-- U1: a RPC é a única porta, escreve com a identidade de quem chama e recusa
+-- tipo desconhecido. Quem chamou não é SuperAdmin, então continua sem ler nada.
+savepoint u1;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int;
+begin
+  perform public.log_security_event('permission_denied', 'events.insert', current_setting('app.church_b')::uuid);
+
+  select count(*) into n from public.security_events;
+  if n <> 0 then raise exception 'RLS-FALHA U1: a1 leu % evento(s) de seguranca (leitura e do SuperAdmin)', n; end if;
+
+  begin
+    perform public.log_security_event('outra_coisa', 'nada', null);
+    raise exception 'RLS-FALHA U1: tipo de evento desconhecido foi aceito pela RPC';
+  exception when invalid_parameter_value then null; end;
+
+  begin
+    insert into public.security_events (actor_id, kind) values (current_setting('app.user_a1')::uuid, 'permission_denied');
+    raise exception 'RLS-FALHA U1: insert direto em security_events foi aceito pela API';
+  exception when insufficient_privilege then null; end;
+end $$;
+rollback to savepoint u1;
+
+-- U2: o SuperAdmin lê o que a RPC gravou, com nome de quem tentou, e as duas
+-- visões (resumo por tipo e log dos últimos) concordam com a contagem.
+savepoint u2;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$ begin
+  perform public.log_security_event('permission_denied', 'marketing_campaigns.insert', current_setting('app.church_a')::uuid);
+  perform public.log_security_event('publish_denied', 'church_social_accounts.update', current_setting('app.church_a')::uuid);
+end $$;
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_su'))::text, true);
+do $$
+declare n int; c int; ultimo_evento timestamptz; nm text;
+begin
+  select count(*) into n from public.security_events;
+  if n <> 2 then raise exception 'RLS-FALHA U2: superadmin deveria ver 2 eventos, viu %', n; end if;
+
+  select last_24h into c from public.security_event_summary where kind = 'permission_denied';
+  if c <> 1 then raise exception 'RLS-FALHA U2: o resumo deveria marcar 1 recusa de permissao em 24h, marcou %', coalesce(c::text, 'null'); end if;
+  select total, last_at into c, ultimo_evento from public.security_event_summary where kind = 'publish_denied';
+  if c <> 1 or ultimo_evento is null then raise exception 'RLS-FALHA U2: o resumo de publish_denied veio % / %', coalesce(c::text,'null'), coalesce(ultimo_evento::text,'null'); end if;
+
+  select count(*) into n from public.security_event_log;
+  if n <> 2 then raise exception 'RLS-FALHA U2: o log do superadmin deveria ter 2 linhas, tem %', n; end if;
+  select actor_name into nm from public.security_event_log where kind = 'publish_denied';
+  if nm is distinct from 'Administrador A' then raise exception 'RLS-FALHA U2: o log nao projeta o nome de quem tentou (%)', coalesce(nm,'null'); end if;
+end $$;
+rollback to savepoint u2;
+
+-- U3: sem vínculo nenhum também não lê; e anônimo nem executa a RPC.
+savepoint u3;
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon","sub":null}', true);
+do $$
+declare n int;
+begin
+  begin select count(*) into n from public.security_events;
+        exception when insufficient_privilege then n := 0; end;
+  if n <> 0 then raise exception 'RLS-FALHA U3: anon leu % eventos de seguranca', n; end if;
+  begin
+    perform public.log_security_event('permission_denied', 'nada', null);
+    raise exception 'RLS-FALHA U3: anon executou log_security_event';
+  exception when insufficient_privilege then null; end;
+end $$;
+rollback to savepoint u3;
+
+-- U4: estrutura — uma política de leitura, sem grant de escrita para ninguém,
+-- execute só para authenticated, e a RPC com search_path fixo.
+savepoint u4;
+reset role;
+do $$
+declare n int; pinned boolean; found boolean; n_bool boolean;
+begin
+  select count(*) into n from pg_policies where schemaname='public' and tablename='security_events';
+  if n <> 1 then raise exception 'RLS-FALHA U4: esperava 1 politica em security_events, achei %', n; end if;
+  select count(*) into n from pg_policies where schemaname='public' and tablename='security_events'
+    and cmd = 'SELECT' and qual like '%is_superadmin()%';
+  if n <> 1 then raise exception 'RLS-FALHA U4: a politica de security_events nao e leitura de SuperAdmin'; end if;
+
+  select count(*) into n from information_schema.role_table_grants
+  where table_schema='public' and table_name='security_events' and grantee='anon';
+  if n <> 0 then raise exception 'RLS-FALHA U4: anon tem % grant(s) em security_events', n; end if;
+  select count(*) into n from information_schema.role_table_grants
+  where table_schema='public' and table_name='security_events' and grantee='authenticated'
+    and privilege_type in ('INSERT','UPDATE','DELETE');
+  if n <> 0 then raise exception 'RLS-FALHA U4: authenticated tem grant de escrita em security_events (% linha(s))', n; end if;
+
+  select has_function_privilege('anon', 'public.log_security_event(text,text,uuid)', 'EXECUTE') into n_bool;
+  if n_bool then raise exception 'RLS-FALHA U4: anon consegue executar log_security_event'; end if;
+  if not has_function_privilege('authenticated', 'public.log_security_event(text,text,uuid)', 'EXECUTE') then
+    raise exception 'RLS-FALHA U4: authenticated nao consegue executar log_security_event (o app inteiro fica mudo)';
+  end if;
+
+  select exists (select 1 from pg_proc p join pg_namespace ns on ns.oid=p.pronamespace
+                 where ns.nspname='public' and p.proname='log_security_event'),
+         (p.proconfig @> array['search_path=public']::text[])
+    into found, pinned
+  from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+  where ns.nspname = 'public' and p.proname = 'log_security_event';
+  if not found then raise exception 'RLS-FALHA U4: log_security_event() sumiu de public'; end if;
+  if not pinned then raise exception 'RLS-FALHA U4: log_security_event() sem search_path fixo'; end if;
+
+  select count(*) into n from information_schema.views
+  where table_schema='public' and table_name in ('security_event_summary','security_event_log');
+  if n <> 2 then raise exception 'RLS-FALHA U4: faltam views de monitoramento (% encontradas)', n; end if;
+end $$;
+rollback to savepoint u4;
 
 do $$ begin raise notice 'RLS-ISOLATION: todos os casos passaram'; end $$;
 

@@ -6,6 +6,8 @@ import { Notice } from '@/components/common/Notice'
 import { EventCard } from '@/components/common/Cards'
 import { usePublicEvent, usePublicEvents } from '@/hooks/useEvents'
 import { useRegistrationStats } from '@/hooks/useRegistrations'
+import { useVisitorFavorites } from '@/hooks/useVisitorProfile'
+import { addVisitorFavorite, removeVisitorFavorite } from '@/services/data/visitorFavoriteService'
 import { registerForEvent } from '@/services/data/registrationService'
 import { formatDate, formatRegistrations, whatsappLink } from '@/utils/format'
 import { absoluteUrl, canWebShare, copyToClipboard, utmLink, webShare, whatsappShareLink } from '@/utils/share'
@@ -78,12 +80,78 @@ function RegisterForm({ eventId, full, onRegistered }: { eventId: string; full: 
   )
 }
 
+/**
+ * Coração de verdade (`visitor_favorites`, 0016). O estado vem da leitura da própria
+ * conta, e o clique só pinta depois de o banco responder — até aqui era um
+ * `useState(false)`: esvaziava ao trocar de página e não salvava nada.
+ *
+ * Sem conta não existe favorito a salvar (a RLS é `user_id = auth.uid()`), então o
+ * botão vira link de entrada em vez de ligar o coração no vazio.
+ */
+function FavoriteButton({
+  eventId,
+  userId,
+  favorite,
+  reading,
+  onChanged,
+}: {
+  eventId: string
+  userId?: string
+  favorite: boolean
+  reading: boolean
+  onChanged: () => void
+}) {
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  if (!userId) {
+    return (
+      <Link to="/login" className="flex-1">
+        <Button variant="outline" className="w-full" icon={<Heart className="h-4 w-4" />}>
+          Entre para salvar
+        </Button>
+      </Link>
+    )
+  }
+
+  async function toggle() {
+    setSaving(true)
+    setError(null)
+    const result = favorite
+      ? await removeVisitorFavorite(eventId, userId)
+      : await addVisitorFavorite(eventId, userId)
+    setSaving(false)
+    if (result.ok) onChanged()
+    else setError(result.error ?? 'Não foi possível atualizar o favorito.')
+  }
+
+  return (
+    <div className="flex-1">
+      <Button
+        variant="outline"
+        className="w-full"
+        disabled={saving || reading}
+        icon={<Heart className={favorite ? 'h-4 w-4 fill-red-500 text-red-500' : 'h-4 w-4'} />}
+        onClick={toggle}
+      >
+        {saving ? 'Salvando…' : reading ? 'Consultando…' : favorite ? 'Nos favoritos' : 'Favoritar'}
+      </Button>
+      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+    </div>
+  )
+}
+
 export function EventDetailPage() {
   const { slug } = useParams()
   const { event, loading, error } = usePublicEvent(slug)
   const { rows: onAir } = usePublicEvents()
   const { byEvent, reload: reloadStats } = useRegistrationStats()
-  const [favorite, setFavorite] = useState(false)
+  const {
+    userId,
+    eventIds,
+    loading: favoritesLoading,
+    reload: reloadFavorites,
+  } = useVisitorFavorites()
 
   // Meta e JSON-LD do evento real. Enquanto carrega não se indexa nem se inventa;
   // só quando confirmado inexistente vira noindex ("não encontrado").
@@ -202,9 +270,13 @@ export function EventDetailPage() {
                 </p>
                 <RegisterForm eventId={event.id} full={full} onRegistered={reloadStats} />
                 <div className="mt-3 flex gap-2">
-                  <Button variant="outline" className="flex-1" icon={<Heart className={favorite ? 'h-4 w-4 fill-red-500 text-red-500' : 'h-4 w-4'} />} onClick={() => setFavorite((v) => !v)}>
-                    {favorite ? 'Favorito' : 'Favoritar'}
-                  </Button>
+                  <FavoriteButton
+                    eventId={event.id}
+                    userId={userId}
+                    favorite={eventIds.has(event.id)}
+                    reading={favoritesLoading}
+                    onChanged={reloadFavorites}
+                  />
                 </div>
                 <EventShare url={shareUrl} title={event.name} text={shareText} />
                 <p className="mt-3 text-xs text-slate-400">

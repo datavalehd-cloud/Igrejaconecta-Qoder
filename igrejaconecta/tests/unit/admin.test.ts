@@ -4,16 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   PLATFORM_USER_SELECT,
   countDistinctUsers,
-  demoPlatformUsers,
   fetchPlatformUsers,
 } from '@/services/data/adminService'
+import { demoPlatformUsers } from '../fixtures/adminMirror'
+import { demoAllEvents } from '../fixtures/eventMirror'
+import { demoChurchCampaigns } from '../fixtures/marketingMirror'
 import {
   EVENTS_MANAGED_COLUMNS,
   EVENTS_MANAGED_SELECT,
-  demoAllEvents,
   fetchAllEvents,
 } from '@/services/data/eventService'
-import { demoChurchCampaigns } from '@/services/data/marketingService'
 import { buildReportRows, groupReportRows, reportToCsv } from '@/utils/reports'
 import { roleLabels } from '@/utils/rbac'
 import type { Campaign, Church, ChurchEvent, PlatformUser, RegistrationStats, RoleKey } from '@/types'
@@ -38,7 +38,9 @@ const from = vi.fn()
 const CHURCH_ROLES: RoleKey[] = ['church_admin', 'manager', 'communicator', 'pastor', 'visitor']
 
 beforeEach(() => {
-  backend.supabase = null
+  // O app não tem mais caminho sem Supabase: o cliente simulado está montado para
+  // todos os casos, e o que exercita a loja em memória chama o fixture direto.
+  backend.supabase = { from }
   vi.resetAllMocks()
   chain.select.mockReturnValue(chain)
   chain.eq.mockReturnValue(chain)
@@ -49,10 +51,6 @@ beforeEach(() => {
 afterEach(() => {
   backend.supabase = null
 })
-
-function useRealClient() {
-  backend.supabase = { from }
-}
 
 /** Colunas de tabela de uma linha devolvida, sem os campos derivados pelo serviço. */
 function tableColumns(row: object, derived: readonly string[]) {
@@ -111,7 +109,6 @@ describe('diretório global de usuários — espelho demo', () => {
 })
 
 describe('diretório global — contrato Supabase (cliente simulado)', () => {
-  beforeEach(useRealClient)
 
   it('SuperAdmin pede a projeção congelada, ordena por created_at e não recorta por igreja', async () => {
     await fetchPlatformUsers('superadmin')
@@ -230,7 +227,6 @@ describe('eventos globais — espelho demo', () => {
 })
 
 describe('eventos globais — contrato Supabase (cliente simulado)', () => {
-  beforeEach(useRealClient)
 
   it('SuperAdmin pede a projeção de gestão, ordena por início e não recorta por igreja', async () => {
     await fetchAllEvents('superadmin')

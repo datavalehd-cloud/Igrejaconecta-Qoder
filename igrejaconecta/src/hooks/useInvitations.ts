@@ -16,10 +16,11 @@ export function useInvitations() {
   return useKeyedList(canManage && Boolean(churchId), `${churchId ?? ''}|${role ?? ''}`, fetcher, 'Não foi possível carregar os convites.')
 }
 
-/** Convites endereçados ao e-mail desta conta, em qualquer igreja. */
+/** Convites endereçados a esta conta, em qualquer igreja. */
 export function useMyInvitations() {
   const { session } = useAuth()
   const email = session?.profile.email
-  const fetcher = useCallback(() => pendingInvitationsForMe(email), [email])
+  // Quem é "eu" decide o banco (`pending_invitations_for_me` filtra pelo e-mail confirmado); daqui o e-mail é só a chave do cache.
+  const fetcher = useCallback(() => pendingInvitationsForMe(), [])
   return useKeyedList(Boolean(email), email ?? '', fetcher, 'Não foi possível carregar seus convites.')
 }

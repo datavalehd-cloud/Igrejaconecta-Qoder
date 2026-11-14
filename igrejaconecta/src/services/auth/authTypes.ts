@@ -39,13 +39,10 @@ export interface MfaEnrollment {
 }
 
 /**
- * Contrato único de autenticação. Duas implementações:
- *  - demoBackend: dados mockados (sem chaves no .env.local)
- *  - supabaseBackend: Supabase Auth real (quando configurado)
- * A UI (AuthContext + páginas) não sabe qual está ativa.
+ * Contrato único de autenticação, implementado por `supabaseBackend` (Supabase
+ * Auth real). As páginas só conhecem esta interface.
  */
 export interface AuthBackend {
-  mode: 'demo' | 'supabase'
   restore(): Promise<Session | null>
   subscribe(cb: (session: Session | null) => void): () => void
   login(email: string, password: string): Promise<LoginResult>
@@ -54,7 +51,6 @@ export interface AuthBackend {
   recover(email: string): Promise<SimpleResult>
   updatePassword?(password: string): Promise<SimpleResult>
   logout(): Promise<void>
-  switchDemo?(email: string): void
   enrollMfa?(): Promise<SimpleResult & { enrollment?: MfaEnrollment }>
   verifyEnrollment?(factorId: string, code: string): Promise<SimpleResult>
 }

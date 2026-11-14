@@ -9,7 +9,7 @@ import type { RoleKey } from '@/types'
 
 export function LoginPage() {
   useDocumentMeta({ title: 'Entrar', path: '/login', noindex: true })
-  const { login, confirmMfa, loading, mode, demoAccounts } = useAuth()
+  const { login, confirmMfa, loading } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const from = (location.state as { from?: string })?.from
@@ -52,7 +52,7 @@ export function LoginPage() {
           <div className="flex items-center gap-2 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-700">
             <ShieldCheck className="h-4 w-4" /> MFA exigido para este papel.
           </div>
-          <Field label="Código de 6 dígitos" hint={mode === 'demo' ? 'Demo: qualquer código de 6 dígitos funciona.' : 'Informe o código gerado pelo seu app autenticador.'}>
+          <Field label="Código de 6 dígitos" hint="Informe o código gerado pelo seu app autenticador.">
             <Input inputMode="numeric" maxLength={6} placeholder="000000" value={mfaCode} onChange={(e) => setMfaCode(e.target.value)} autoFocus />
           </Field>
           {error && <p className="text-sm text-red-600">{error}</p>}
@@ -74,24 +74,6 @@ export function LoginPage() {
           <p className="text-center text-sm text-slate-500">
             Não tem conta? <Link to="/cadastro" className="font-semibold text-brand-600 hover:underline">Cadastre sua igreja</Link>
           </p>
-
-          {mode === 'demo' && (
-            <div className="mt-6 rounded-lg border border-line bg-surface p-3">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Contas de demonstração (senha: demo1234)</p>
-              <div className="space-y-1">
-                {demoAccounts.map((a) => (
-                  <button
-                    key={a.email}
-                    type="button"
-                    onClick={() => { setEmail(a.email); setPassword(a.password) }}
-                    className="block w-full truncate rounded px-2 py-1 text-left text-xs text-slate-600 hover:bg-white"
-                  >
-                    {a.email} · <span className="text-slate-400">{a.role}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </form>
       )}
     </AuthLayout>

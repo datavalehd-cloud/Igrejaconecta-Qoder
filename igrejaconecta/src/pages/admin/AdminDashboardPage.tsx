@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Building2, Users, CalendarDays, Ticket, Megaphone, AlertTriangle, Sparkles } from 'lucide-react'
+import { Building2, Users, CalendarDays, Ticket, Megaphone, Sparkles } from 'lucide-react'
 import { PageHeader, Stat, Card, CardHeader, CardBody, Badge, Button } from '@/components/common/primitives'
 import { ApprovalBadge } from '@/components/common/StatusBadges'
 import { ApprovalActions } from '@/components/admin/ApprovalActions'
@@ -71,7 +71,6 @@ export function AdminDashboardPage() {
           <CardBody className="space-y-3 text-sm">
             <ProviderRow icon={<Sparkles className="h-4 w-4" />} label="OpenAI" />
             <ProviderRow icon={<Megaphone className="h-4 w-4" />} label="Meta (IG/FB)" />
-            <ProviderRow icon={<AlertTriangle className="h-4 w-4" />} label="TikTok" />
             <ProviderRow icon={<Ticket className="h-4 w-4" />} label="WhatsApp" />
             <ProviderRow icon={<CalendarDays className="h-4 w-4" />} label="Filas / pg_cron" />
             <ProviderRow icon={<Users className="h-4 w-4" />} label="Webhooks" />

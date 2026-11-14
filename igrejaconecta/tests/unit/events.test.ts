@@ -18,10 +18,6 @@ import {
   EVENTS_PUBLIC_COLUMNS,
   EVENTS_PUBLIC_SELECT,
   createEvent,
-  demoChurchEvents,
-  demoEventCategories,
-  demoPublicEventBySlug,
-  demoPublicEvents,
   eventSlugTaken,
   fetchChurchEvents,
   fetchEventCategories,
@@ -32,6 +28,15 @@ import {
   validateEventDraft,
   type EventDraft,
 } from '@/services/data/eventService'
+import {
+  demoChurchEvents,
+  demoCreateEvent,
+  demoEventCategories,
+  demoPublicEvents,
+  demoPublicEventBySlug,
+  demoSetEventStatus,
+  demoUpdateEvent,
+} from '../fixtures/eventMirror'
 import type { ChurchEvent } from '@/types'
 
 /**
@@ -89,7 +94,9 @@ function managedRow(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
-  backend.supabase = null
+  // O app não tem mais caminho sem Supabase: o cliente simulado está montado para
+  // todos os casos, e o que exercita a loja em memória chama o fixture direto.
+  backend.supabase = { from }
   vi.resetAllMocks()
   chain.select.mockReturnValue(chain)
   chain.eq.mockReturnValue(chain)
@@ -107,10 +114,6 @@ afterEach(() => {
   categories.splice(0, categories.length, ...structuredClone(originalCategories))
   backend.supabase = null
 })
-
-function useRealClient() {
-  backend.supabase = { from }
-}
 
 /** Colunas de tabela de uma linha devolvida, sem os campos derivados pelo serviço. */
 function tableColumns(row: object, derived: readonly string[]) {
@@ -310,7 +313,6 @@ describe('catálogo de categorias — espelho do caso M2', () => {
 })
 
 describe('contrato Supabase (cliente simulado)', () => {
-  beforeEach(useRealClient)
 
   it('o diretório pede a projeção pública, os dois filtros e a ordem de início', async () => {
     await fetchPublicEvents()
@@ -474,7 +476,6 @@ describe('eventos — contrato com o grupo M e a migração 0011', () => {
 
 describe('escritas — portas de permissão (espelho de M6 e M7)', () => {
   it('papel sem events.manage não escreve, e nenhuma consulta sai', async () => {
-    useRealClient()
     for (const role of ['visitor', undefined] as const) {
       const actor = { churchId: 'ch1', role }
       expect(await createEvent(validDraft(), actor, 'draft')).toEqual({ ok: false, error: EVENT_MANAGE_DENIED })
@@ -485,7 +486,6 @@ describe('escritas — portas de permissão (espelho de M6 e M7)', () => {
   })
 
   it('os cinco papéis com events.manage chegam ao banco', async () => {
-    useRealClient()
     for (const role of ['superadmin', 'church_admin', 'manager', 'pastor', 'communicator'] as const) {
       await createEvent(validDraft(), { churchId: 'ch-real', role }, 'draft')
     }
@@ -494,7 +494,6 @@ describe('escritas — portas de permissão (espelho de M6 e M7)', () => {
   })
 
   it('publicar sem events.publish é recusado antes de qualquer consulta (M6)', async () => {
-    useRealClient()
     expect(await createEvent(validDraft(), { churchId: 'ch1', role: 'communicator' }, 'published'))
       .toEqual({ ok: false, error: EVENT_PUBLISH_DENIED })
     expect(await setEventStatus('e1', 'published', { churchId: 'ch1', role: 'communicator' }))
@@ -503,7 +502,6 @@ describe('escritas — portas de permissão (espelho de M6 e M7)', () => {
   })
 
   it('o mesmo comunicador cria, edita e cancela: a porta é só a publicação', async () => {
-    useRealClient()
     chain.maybeSingle.mockResolvedValue({ data: managedRow(), error: null })
     const actor = { churchId: 'ch-real', role: 'communicator' as const }
     expect((await createEvent(validDraft(), actor, 'draft')).ok).toBe(true)
@@ -513,14 +511,12 @@ describe('escritas — portas de permissão (espelho de M6 e M7)', () => {
   })
 
   it('sem igreja na sessão ninguém cria — nem o SuperAdmin, que não tem igreja ativa', async () => {
-    useRealClient()
     expect(await createEvent(validDraft(), { role: 'superadmin' }, 'draft')).toEqual({ ok: false, error: EVENT_NO_CHURCH })
     expect(await createEvent(validDraft(), {}, 'draft')).toEqual({ ok: false, error: EVENT_MANAGE_DENIED })
     expect(from).not.toHaveBeenCalled()
   })
 
   it('a porta vem antes da validação: papel errado recebe a mensagem de permissão', async () => {
-    useRealClient()
     expect(await createEvent(validDraft({ name: '' }), { churchId: 'ch1', role: 'visitor' }, 'draft'))
       .toEqual({ ok: false, error: EVENT_MANAGE_DENIED })
     expect(await createEvent(validDraft({ name: '' }), { churchId: 'ch1', role: 'communicator' }, 'published'))
@@ -529,8 +525,6 @@ describe('escritas — portas de permissão (espelho de M6 e M7)', () => {
 })
 
 describe('escritas — contrato Supabase (cliente simulado)', () => {
-  beforeEach(useRealClient)
-
   it('a criação envia só colunas reais, com a igreja da sessão e o slug vindo do nome', async () => {
     chain.maybeSingle.mockResolvedValue({ data: managedRow(), error: null })
     const result = await createEvent(validDraft(), { churchId: 'ch-real', role: 'church_admin' }, 'draft')
@@ -643,17 +637,17 @@ describe('validação — o que não chega ao banco', () => {
     expect(validateEventDraft(validDraft({ latitude: null, longitude: null }))).toBeNull()
   })
 
-  it('a validação vale para criar e para editar, e nada é gravado quando falha', async () => {
+  it('a validação vale para criar e para editar, e nada é gravado quando falha', () => {
     const ruim = validDraft({ ends_at: '2026-12-01T10:00:00.000Z' })
-    expect((await createEvent(ruim, { churchId: 'ch1', role: 'manager' }, 'draft')).ok).toBe(false)
-    expect((await updateEvent('e1', ruim, { churchId: 'ch1', role: 'manager' })).ok).toBe(false)
+    expect(demoCreateEvent(ruim, { churchId: 'ch1', role: 'manager' }, 'draft').ok).toBe(false)
+    expect(demoUpdateEvent('e1', ruim, { churchId: 'ch1', role: 'manager' }).ok).toBe(false)
     expect(events).toEqual(originalEvents)
   })
 })
 
-describe('escritas — espelho demo (as mesmas recusas do banco)', () => {
-  it('criar rascunho entra na agenda da igreja e não no diretório público', async () => {
-    const result = await createEvent(validDraft(), { churchId: 'ch1', role: 'manager' }, 'draft')
+describe('escritas — loja do fixture (as mesmas recusas do banco)', () => {
+  it('criar rascunho entra na agenda da igreja e não no diretório público', () => {
+    const result = demoCreateEvent(validDraft(), { churchId: 'ch1', role: 'manager' }, 'draft')
     expect(result.ok).toBe(true)
     expect(demoChurchEvents('ch1').map((e) => e.id)).toContain(result.event!.id)
     expect(demoPublicEvents().map((e) => e.id)).not.toContain(result.event!.id)
@@ -670,15 +664,15 @@ describe('escritas — espelho demo (as mesmas recusas do banco)', () => {
     })
   })
 
-  it('criar publicado já entra no diretório público, com a igreja aprovada e ativa', async () => {
-    const result = await createEvent(validDraft(), { churchId: 'ch1', role: 'church_admin' }, 'published')
+  it('criar publicado já entra no diretório público, com a igreja aprovada e ativa', () => {
+    const result = demoCreateEvent(validDraft(), { churchId: 'ch1', role: 'church_admin' }, 'published')
     expect(result.ok).toBe(true)
     expect(demoPublicEvents().map((e) => e.id)).toContain(result.event!.id)
     expect(demoPublicEventBySlug('vigilia-de-avivamento')).not.toBeNull()
   })
 
-  it('criar com filial da própria igreja grava branch_id e coordenada', async () => {
-    const result = await createEvent(
+  it('criar com filial da própria igreja grava branch_id e coordenada', () => {
+    const result = demoCreateEvent(
       validDraft({ branch_id: 'b1', latitude: -23.1857, longitude: -45.8871 }),
       { churchId: 'ch1', role: 'manager' },
       'draft',
@@ -687,15 +681,15 @@ describe('escritas — espelho demo (as mesmas recusas do banco)', () => {
     expect(result.event).toMatchObject({ branch_id: 'b1', latitude: -23.1857, longitude: -45.8871 })
   })
 
-  it('filial de outra igreja é recusada — espelho demo do trigger enforce_event_branch (O8)', async () => {
+  it('filial de outra igreja é recusada — o fixture espelha o trigger enforce_event_branch (O8)', () => {
     // b3 é da ch2; criar em ch1 apontando para b3 é o que o trigger recusa no banco.
-    const resultado = await createEvent(validDraft({ branch_id: 'b3' }), { churchId: 'ch1', role: 'manager' }, 'draft')
+    const resultado = demoCreateEvent(validDraft({ branch_id: 'b3' }), { churchId: 'ch1', role: 'manager' }, 'draft')
     expect(resultado).toEqual({ ok: false, error: EVENT_BRANCH_MISMATCH })
     expect(events).toEqual(originalEvents)
   })
 
-  it('filial inexistente recebe a mesma mensagem de filial alheia: sem oráculo de existência', async () => {
-    const resultado = await createEvent(
+  it('filial inexistente recebe a mesma mensagem de filial alheia: sem oráculo de existência', () => {
+    const resultado = demoCreateEvent(
       validDraft({ branch_id: 'filial-que-nao-existe' }),
       { churchId: 'ch1', role: 'manager' },
       'draft',
@@ -703,74 +697,74 @@ describe('escritas — espelho demo (as mesmas recusas do banco)', () => {
     expect(resultado).toEqual({ ok: false, error: EVENT_BRANCH_MISMATCH })
   })
 
-  it('editar apontando para filial de outra igreja também é recusado', async () => {
-    const resultado = await updateEvent('e1', validDraft({ branch_id: 'b3' }), { churchId: 'ch1', role: 'manager' })
+  it('editar apontando para filial de outra igreja também é recusado', () => {
+    const resultado = demoUpdateEvent('e1', validDraft({ branch_id: 'b3' }), { churchId: 'ch1', role: 'manager' })
     expect(resultado).toEqual({ ok: false, error: EVENT_BRANCH_MISMATCH })
     expect(events.find((e) => e.id === 'e1')!.branch_id).toBe('b1')
   })
 
-  it('publicar com a igreja suspensa não põe no ar: quem decide é a audiência da igreja', async () => {
+  it('publicar com a igreja suspensa não põe no ar: quem decide é a audiência da igreja', () => {
     churches.find((c) => c.id === 'ch1')!.approval_status = 'suspended'
-    const result = await createEvent(validDraft(), { churchId: 'ch1', role: 'church_admin' }, 'published')
+    const result = demoCreateEvent(validDraft(), { churchId: 'ch1', role: 'church_admin' }, 'published')
     expect(result.ok).toBe(true)
     expect(demoPublicEvents()).toEqual([])
     expect(demoChurchEvents('ch1').map((e) => e.id)).toContain(result.event!.id)
   })
 
-  it('o comunicador cria e edita, mas não publica — igual ao banco (M6)', async () => {
+  it('o comunicador cria e edita, mas não publica — igual ao banco (M6)', () => {
     const actor = { churchId: 'ch1', role: 'communicator' as const }
-    const criado = await createEvent(validDraft(), actor, 'draft')
+    const criado = demoCreateEvent(validDraft(), actor, 'draft')
     expect(criado.ok).toBe(true)
     const id = criado.event!.id
 
-    expect(await createEvent(validDraft({ name: 'Outro evento' }), actor, 'published'))
+    expect(demoCreateEvent(validDraft({ name: 'Outro evento' }), actor, 'published'))
       .toEqual({ ok: false, error: EVENT_PUBLISH_DENIED })
-    expect(await setEventStatus(id, 'published', actor)).toEqual({ ok: false, error: EVENT_PUBLISH_DENIED })
+    expect(demoSetEventStatus(id, 'published', actor)).toEqual({ ok: false, error: EVENT_PUBLISH_DENIED })
     expect(events.find((e) => e.id === id)!.status).toBe('draft')
     expect(events).toHaveLength(originalEvents.length + 1)
 
-    expect((await updateEvent(id, validDraft({ name: 'Vigília de Avivamento (editada)' }), actor)).ok).toBe(true)
+    expect(demoUpdateEvent(id, validDraft({ name: 'Vigília de Avivamento (editada)' }), actor).ok).toBe(true)
     expect(events.find((e) => e.id === id)!.name).toBe('Vigília de Avivamento (editada)')
-    expect((await setEventStatus(id, 'cancelled', actor)).ok).toBe(true)
+    expect(demoSetEventStatus(id, 'cancelled', actor).ok).toBe(true)
   })
 
-  it('slug duplicado é recusado, com o endereço na mensagem e sem gravar nada', async () => {
-    const result = await createEvent(validDraft({ name: 'Congresso de Jovens 2026' }), { churchId: 'ch1', role: 'manager' }, 'draft')
+  it('slug duplicado é recusado, com o endereço na mensagem e sem gravar nada', () => {
+    const result = demoCreateEvent(validDraft({ name: 'Congresso de Jovens 2026' }), { churchId: 'ch1', role: 'manager' }, 'draft')
     expect(result).toEqual({ ok: false, error: eventSlugTaken('congresso-de-jovens-2026') })
     expect(events).toHaveLength(originalEvents.length)
   })
 
-  it('editar não troca igreja, slug, is_free nem status', async () => {
+  it('editar não troca igreja, slug, is_free nem status', () => {
     const antes = events.find((e) => e.id === 'e1')!
     const fixas = { church_id: antes.church_id, slug: antes.slug, is_free: antes.is_free, status: antes.status }
-    const result = await updateEvent('e1', validDraft(), { churchId: 'ch1', role: 'manager' })
+    const result = demoUpdateEvent('e1', validDraft(), { churchId: 'ch1', role: 'manager' })
     expect(result.ok).toBe(true)
     expect(events.find((e) => e.id === 'e1')).toMatchObject(fixas)
     expect(result.event!.slug).toBe(fixas.slug)
     expect(result.event!.name).toBe('Vigília de Avivamento')
   })
 
-  it('editar evento de outra igreja devolve "não encontrado", sem confirmar que existe', async () => {
-    expect(await updateEvent('e3', validDraft(), { churchId: 'ch1', role: 'manager' })).toEqual({ ok: false, error: EVENT_NOT_FOUND })
-    expect(await setEventStatus('e3', 'cancelled', { churchId: 'ch1', role: 'manager' })).toEqual({ ok: false, error: EVENT_NOT_FOUND })
+  it('editar evento de outra igreja devolve "não encontrado", sem confirmar que existe', () => {
+    expect(demoUpdateEvent('e3', validDraft(), { churchId: 'ch1', role: 'manager' })).toEqual({ ok: false, error: EVENT_NOT_FOUND })
+    expect(demoSetEventStatus('e3', 'cancelled', { churchId: 'ch1', role: 'manager' })).toEqual({ ok: false, error: EVENT_NOT_FOUND })
     expect(events.find((e) => e.id === 'e3')).toEqual(originalEvents.find((e) => e.id === 'e3'))
   })
 
-  it('o SuperAdmin alcança o evento de qualquer igreja, sem trocar a igreja dele', async () => {
-    expect((await updateEvent('e3', validDraft({ name: 'Florescer (novo nome)' }), { role: 'superadmin' })).ok).toBe(true)
+  it('o SuperAdmin alcança o evento de qualquer igreja, sem trocar a igreja dele', () => {
+    expect(demoUpdateEvent('e3', validDraft({ name: 'Florescer (novo nome)' }), { role: 'superadmin' }).ok).toBe(true)
     expect(events.find((e) => e.id === 'e3')).toMatchObject({ name: 'Florescer (novo nome)', church_id: 'ch2' })
   })
 
-  it('cancelar tira do diretório público e mantém as inscrições do evento', async () => {
+  it('cancelar tira do diretório público e mantém as inscrições do evento', () => {
     expect(demoPublicEventBySlug('vigilia-de-oracao')).not.toBeNull()
-    expect((await setEventStatus('e2', 'cancelled', { churchId: 'ch1', role: 'church_admin' })).ok).toBe(true)
+    expect(demoSetEventStatus('e2', 'cancelled', { churchId: 'ch1', role: 'church_admin' }).ok).toBe(true)
     expect(demoPublicEventBySlug('vigilia-de-oracao')).toBeNull()
     expect(demoChurchEvents('ch1').map((e) => e.id)).toContain('e2')
     expect(registrations.filter((r) => r.event_id === 'e2')).toHaveLength(1)
   })
 
-  it('a linha criada tem as colunas de gestão mais as derivadas, e nada além', async () => {
-    const result = await createEvent(validDraft(), { churchId: 'ch1', role: 'manager' }, 'draft')
+  it('a linha criada tem as colunas de gestão mais as derivadas, e nada além', () => {
+    const result = demoCreateEvent(validDraft(), { churchId: 'ch1', role: 'manager' }, 'draft')
     const gravada = events.find((e) => e.id === result.event!.id)!
     expect(Object.keys(gravada).sort()).toEqual([...new Set([...EVENTS_MANAGED_COLUMNS, 'category', 'church_name'])].sort())
     expect(tableColumns(result.event!, ['category', 'church_name'])).toEqual([...EVENTS_MANAGED_COLUMNS].sort())

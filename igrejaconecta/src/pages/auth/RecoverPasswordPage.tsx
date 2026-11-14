@@ -8,7 +8,7 @@ import { useDocumentMeta } from '@/hooks/useDocumentMeta'
 
 export function RecoverPasswordPage() {
   useDocumentMeta({ title: 'Recuperar senha', path: '/recuperar-senha', noindex: true })
-  const { recover, loading, mode } = useAuth()
+  const { recover, loading } = useAuth()
   const [email, setEmail] = useState('')
   const [sent, setSent] = useState(false)
 
@@ -26,7 +26,7 @@ export function RecoverPasswordPage() {
           <p className="mt-3 font-semibold text-green-700">Link enviado!</p>
           <p className="mt-1 text-sm text-green-700/80">
             Verifique sua caixa de entrada em <strong>{email}</strong>.{' '}
-            {mode === 'demo' ? '(No modo demo o e-mail não é realmente enviado.)' : 'Confira também a caixa de spam.'}
+            Confira também a caixa de spam.
           </p>
           <Link to="/login" className="mt-4 inline-block text-sm font-semibold text-brand-600 hover:underline">Voltar ao login</Link>
         </div>

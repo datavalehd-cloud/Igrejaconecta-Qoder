@@ -1,5 +1,4 @@
 import { supabase } from '@/services/supabase/client'
-import { churches, members } from '@/data/mock'
 import { slugify } from '@/utils/format'
 import type { ApprovalStatus, Church, MemberChurch, RoleKey } from '@/types'
 
@@ -65,26 +64,14 @@ interface MembershipRow {
 
 /** Igreja aprovada e ativa, em ordem de nome. */
 export async function fetchDirectoryChurches(): Promise<Church[]> {
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('churches')
-      .select(DIRECTORY_COLUMNS.join(','))
-      .eq('approval_status', 'approved')
-      .eq('status', 'active')
-      .order('name')
-    if (error) throw new Error(error.message)
-    return (data ?? []) as unknown as Church[]
-  }
-  return demoDirectoryChurches()
-}
-
-/** Espelha `churches_public_read` + o WHERE do diretório, com a projeção do público. */
-export function demoDirectoryChurches(): Church[] {
-  return sortByName(
-    churches
-      .filter((c) => c.approval_status === 'approved' && c.status === 'active')
-      .map((c) => pick(c, DIRECTORY_COLUMNS)),
-  )
+  const { data, error } = await supabase
+    .from('churches')
+    .select(DIRECTORY_COLUMNS.join(','))
+    .eq('approval_status', 'approved')
+    .eq('status', 'active')
+    .order('name')
+  if (error) throw new Error(error.message)
+  return (data ?? []) as unknown as Church[]
 }
 
 /**
@@ -93,25 +80,14 @@ export function demoDirectoryChurches(): Church[] {
  * quem ordena é a tela com `sortByProximity` (utils/geo).
  */
 export async function fetchMapChurches(): Promise<Church[]> {
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('churches')
-      .select(MAP_COLUMNS.join(','))
-      .eq('approval_status', 'approved')
-      .eq('status', 'active')
-      .order('name')
-    if (error) throw new Error(error.message)
-    return (data ?? []) as unknown as Church[]
-  }
-  return demoMapChurches()
-}
-
-export function demoMapChurches(): Church[] {
-  return sortByName(
-    churches
-      .filter((c) => c.approval_status === 'approved' && c.status === 'active')
-      .map((c) => pick(c, MAP_COLUMNS)),
-  )
+  const { data, error } = await supabase
+    .from('churches')
+    .select(MAP_COLUMNS.join(','))
+    .eq('approval_status', 'approved')
+    .eq('status', 'active')
+    .order('name')
+  if (error) throw new Error(error.message)
+  return (data ?? []) as unknown as Church[]
 }
 
 /**
@@ -121,74 +97,38 @@ export function demoMapChurches(): Church[] {
  * para SuperAdmin; a política é a segunda camada.
  */
 export async function fetchManagedChurches(): Promise<Church[]> {
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('churches')
-      .select(MANAGED_COLUMNS.join(','))
-      .order('approval_status')
-      .order('name')
-    if (error) throw new Error(error.message)
-    return (data ?? []) as unknown as Church[]
-  }
-  return demoManagedChurches()
-}
-
-/** Todas as igrejas e todos os status, na ordem da tela de gestão (caso I4). */
-export function demoManagedChurches(): Church[] {
-  // Estável: ordena por nome e depois por status, o mesmo par `.order(approval_status)
-  // .order(name)` que o modo real manda.
-  return sortByKey(
-    sortByName(churches.map((c) => pick(c, MANAGED_COLUMNS))),
-    (c) => c.approval_status,
-  )
+  const { data, error } = await supabase
+    .from('churches')
+    .select(MANAGED_COLUMNS.join(','))
+    .order('approval_status')
+    .order('name')
+  if (error) throw new Error(error.message)
+  return (data ?? []) as unknown as Church[]
 }
 
 /** Igrejas da conta com o papel de cada uma — o "Minhas igrejas" do perfil. */
 export async function fetchMyChurches(userId?: string): Promise<MemberChurch[]> {
   if (!userId) return []
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('church_members')
-      .select(MEMBERSHIP_SELECT)
-      .eq('user_id', userId)
-      .eq('status', 'active')
-    if (error) throw new Error(error.message)
-    const rows = (data ?? []) as unknown as MembershipRow[]
-    return sortByName(
-      rows
-        // `churches` vem null quando a RLS esconde a linha: sem nome confirmado
-        // pelo banco a associação não aparece na lista, não se inventa um nome.
-        .filter((r) => r.churches !== null)
-        .map((r) => ({
-          church_id: r.church_id,
-          name: r.churches!.name,
-          city: r.churches!.city,
-          state: r.churches!.state,
-          approval_status: r.churches!.approval_status,
-          role_key: (r.roles?.key ?? 'visitor') as RoleKey,
-        })),
-    )
-  }
-  return demoMyChurches(userId)
-}
-
-/** Vínculos ativos da pessoa, resolvidos até a igreja (casos I5/I6). */
-export function demoMyChurches(userId: string): MemberChurch[] {
+  const { data, error } = await supabase
+    .from('church_members')
+    .select(MEMBERSHIP_SELECT)
+    .eq('user_id', userId)
+    .eq('status', 'active')
+  if (error) throw new Error(error.message)
+  const rows = (data ?? []) as unknown as MembershipRow[]
   return sortByName(
-    members
-      .filter((m) => m.user_id === userId && m.status === 'active')
-      .flatMap((m) => {
-        const church = churches.find((c) => c.id === m.church_id)
-        if (!church) return []
-        return [{
-          church_id: church.id,
-          name: church.name,
-          city: church.city ?? null,
-          state: church.state ?? null,
-          approval_status: church.approval_status,
-          role_key: m.role ?? 'visitor',
-        }]
-      }),
+    rows
+      // `churches` vem null quando a RLS esconde a linha: sem nome confirmado
+      // pelo banco a associação não aparece na lista, não se inventa um nome.
+      .filter((r) => r.churches !== null)
+      .map((r) => ({
+        church_id: r.church_id,
+        name: r.churches!.name,
+        city: r.churches!.city,
+        state: r.churches!.state,
+        approval_status: r.churches!.approval_status,
+        role_key: (r.roles?.key ?? 'visitor') as RoleKey,
+      })),
   )
 }
 
@@ -268,41 +208,6 @@ export async function createChurch(draft: ChurchDraft, creator?: ChurchCreator):
     website: cleanText(draft.website),
   }
 
-  if (!supabase) {
-    const taken = new Set(churches.map((c) => c.slug))
-    const slug = candidates.find((candidate) => !taken.has(candidate))
-    if (!slug) return { ok: false, error: CHURCH_CREATE_SLUG_TAKEN }
-    const timestamp = new Date().toISOString()
-    const church: Church = {
-      id: crypto.randomUUID(),
-      slug,
-      ...fields,
-      description: null,
-      logo_url: null,
-      cover_url: null,
-      address: null,
-      zip: null,
-      lat: null,
-      lng: null,
-      status: 'active',
-      approval_status: 'pending',
-      created_at: timestamp,
-      updated_at: timestamp,
-    }
-    churches.push(church)
-    // Espelha o trigger 0006: quem cria vira church_admin ativo da igreja.
-    members.push({
-      id: crypto.randomUUID(),
-      church_id: church.id,
-      user_id: creator.id,
-      role_id: 'r2',
-      role: 'church_admin',
-      status: 'active',
-      created_at: timestamp,
-    })
-    return { ok: true, church: pick(church, CREATED_COLUMNS) }
-  }
-
   for (const slug of candidates) {
     // Sem `.select()` aqui de propósito: o `return=representation` faz o Postgres
     // avaliar o RETURNING antes do trigger 0006 criar o vínculo, e a linha nova
@@ -333,12 +238,6 @@ function describeChurchCreateError(error: { code?: string; message: string }): s
     return CHURCH_CREATE_DENIED
   }
   return error.message
-}
-
-function pick(church: Church, columns: readonly (keyof Church)[]): Church {
-  const out: Record<string, unknown> = {}
-  for (const column of columns) out[column] = church[column]
-  return out as unknown as Church
 }
 
 function sortByName<T extends { name: string }>(rows: T[]) {

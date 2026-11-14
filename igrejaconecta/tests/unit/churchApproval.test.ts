@@ -1,7 +1,8 @@
-import { describe, it, expect, afterEach, vi } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import { churches, auditLogs } from '@/data/mock'
-import { setChurchApprovalStatus, APPROVAL_COLUMNS } from '@/services/data/churchApprovalService'
-import { demoDirectoryChurches, DIRECTORY_COLUMNS } from '@/services/data/churchService'
+import { APPROVAL_COLUMNS } from '@/services/data/churchApprovalService'
+import { DIRECTORY_COLUMNS } from '@/services/data/churchService'
+import { demoDirectoryChurches, demoSetApproval } from '../fixtures/churchMirror'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { ApprovalStatus, Church, RoleKey } from '@/types'
@@ -13,11 +14,6 @@ const suite = readFileSync(path.join(root, 'supabase/tests/database/rls_isolatio
 const original = new Map(churches.map((c) => [c.id, { approval_status: c.approval_status, updated_at: c.updated_at }]))
 const originalAudit = structuredClone(auditLogs)
 const admin = { id: 'u0', email: 'admin@igrejaconecta.app', role: 'superadmin' as const }
-
-// Estes casos são sobre o espelho demo da aprovação. Sem o mock o client real existe
-// (o `.env.local` também é carregado no modo de teste) e a suíte escreveria no banco
-// que está no ar — com ids do mock, que nem são uuid, então só falharia mesmo assim.
-vi.mock('@/services/supabase/client', () => ({ supabase: null }))
 
 afterEach(() => {
   auditLogs.splice(0, auditLogs.length, ...structuredClone(originalAudit))
@@ -68,53 +64,53 @@ const readBackProjection = grupoJProjections.find((p) => p.where.startsWith("whe
 /** A projeção do grupo J que lê o diretório público. */
 const directoryProjection = grupoJProjections.find((p) => p.where.startsWith("where approval_status = 'approved' and status = 'active'"))
 
-describe('aprovação de igreja — espelho demo da escrita (0002 + 0004)', () => {
-  it('recusa quem não é SuperAdmin, com a mesma mensagem do 42501', async () => {
+describe('aprovação de igreja — escrita especificada na loja do fixture (0002 + 0004)', () => {
+  it('recusa quem não é SuperAdmin, com a mesma mensagem do 42501', () => {
     for (const role of ['church_admin', 'manager', 'communicator', 'pastor', 'visitor', undefined] as const) {
-      const result = await setChurchApprovalStatus('ch1', 'rejected', { ...admin, role: role as RoleKey | undefined })
+      const result = demoSetApproval('ch1', 'rejected', { ...admin, role: role as RoleKey | undefined })
       expect(result.ok, `papel ${String(role)} aprovou/rejeitou sem ser SuperAdmin`).toBe(false)
       expect(result.error).toContain('aprovação é exclusividade do SuperAdmin')
     }
     expect(statusOf('ch1')).toBe('approved')
   })
 
-  it('aprovar põe a igreja no diretório — o caso J1 escrito em TypeScript', async () => {
+  it('aprovar põe a igreja no diretório — o caso J1 escrito em TypeScript', () => {
     expect(demoDirectoryChurches().map((c) => c.id)).toEqual(['ch2', 'ch1'])
 
-    const result = await setChurchApprovalStatus('ch3', 'approved', admin)
+    const result = demoSetApproval('ch3', 'approved', admin)
     expect(result.ok).toBe(true)
     expect(statusOf('ch3')).toBe('approved')
     expect(demoDirectoryChurches().map((c) => c.id)).toContain('ch3')
   })
 
-  it('suspender e rejeitar tiram do diretório, e o read-back bate com a lista', async () => {
+  it('suspender e rejeitar tiram do diretório, e o read-back bate com a lista', () => {
     for (const next of ['suspended', 'rejected'] as const) {
-      await setChurchApprovalStatus('ch1', next, admin)
+      demoSetApproval('ch1', next, admin)
       const listed = demoDirectoryChurches().map((c) => c.id)
       expect(listed, `${next} continuou no diretório`).not.toContain('ch1')
       expect(listed).toContain('ch2')
 
-      const returned = (await setChurchApprovalStatus('ch1', 'approved', admin)).church as Church
+      const returned = demoSetApproval('ch1', 'approved', admin).church as Church
       expect(returned.approval_status).toBe('approved')
       expect(demoDirectoryChurches().map((c) => c.id)).toContain('ch1')
     }
   })
 
-  it('a pendente que não está no diretório some também da lista in_review', async () => {
+  it('a pendente que não está no diretório some também da lista in_review', () => {
     // ch3 é pending no mock: aprovar é o que a traz para a leitura pública.
     expect(demoDirectoryChurches().map((c) => c.id)).not.toContain('ch3')
-    await setChurchApprovalStatus('ch3', 'in_review', admin)
+    demoSetApproval('ch3', 'in_review', admin)
     expect(demoDirectoryChurches().map((c) => c.id)).not.toContain('ch3')
   })
 
-  it('sem a linha, não há sucesso inventado', async () => {
-    const result = await setChurchApprovalStatus('ch-inexistente', 'approved', admin)
+  it('sem a linha, não há sucesso inventado', () => {
+    const result = demoSetApproval('ch-inexistente', 'approved', admin)
     expect(result.ok).toBe(false)
     expect(result.error).toContain('não encontrada')
   })
 
-  it('devolve só a projeção de gestão, nunca a linha inteira', async () => {
-    const result = await setChurchApprovalStatus('ch1', 'approved', admin)
+  it('devolve só a projeção de gestão, nunca a linha inteira', () => {
+    const result = demoSetApproval('ch1', 'approved', admin)
     expect(Object.keys(result.church as Church).sort()).toEqual([...APPROVAL_COLUMNS].sort())
     for (const forbidden of ['email', 'zip', 'website', 'lat', 'lng', 'created_by'] as const) {
       expect(result.church, `campo ${forbidden} no retorno da aprovação`).not.toHaveProperty(forbidden)

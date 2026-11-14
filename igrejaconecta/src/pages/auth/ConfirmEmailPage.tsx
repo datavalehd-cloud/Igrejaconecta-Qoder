@@ -18,7 +18,7 @@ export function ConfirmEmailPage() {
           confirmar seu cadastro e acessar o painel.
         </p>
         <p className="mt-2 text-xs text-slate-400">
-          No modo demo a confirmação é simulada. Com o Supabase conectado, o link real valida a conta.
+          O link de confirmação é enviado pelo Supabase Auth. Se ele não chegar, confira a caixa de spam.
         </p>
         <div className="mt-6 flex flex-col gap-2">
           <Link to="/login"><Button className="w-full">Já confirmei, ir para o login</Button></Link>

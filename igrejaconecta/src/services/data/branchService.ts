@@ -1,5 +1,4 @@
 import { supabase } from '@/services/supabase/client'
-import { branches, members } from '@/data/mock'
 import { can } from '@/utils/rbac'
 import { validateLatLng } from '@/utils/geo'
 import type { ChurchBranch, RoleKey } from '@/types'
@@ -86,30 +85,11 @@ export async function fetchChurchBranches(churchId?: string, actor?: BranchActor
   const everyChurch = actor?.role === 'superadmin'
   if (!everyChurch && !churchId) return []
 
-  if (supabase) {
-    let query = supabase.from('church_branches').select(BRANCH_COLUMNS.join(',')).order('name')
-    if (!everyChurch) query = query.eq('church_id', churchId!)
-    const { data, error } = await query
-    if (error) throw new Error(error.message)
-    return (data ?? []) as unknown as ChurchBranch[]
-  }
-  return demoChurchBranches(churchId, actor)
-}
-
-/** Espelha `church_branches_read`: membro ativo da igreja, ou SuperAdmin para todas. */
-export function demoChurchBranches(churchId?: string, actor?: BranchActor): ChurchBranch[] {
-  if (actor?.role === 'superadmin') return sortByName(branches.map((b) => pickColumns(b, BRANCH_COLUMNS)))
-  if (!churchId) return []
-  // Vínculo `invited` não lê filial (caso O3). A checagem só vale quando a sessão
-  // informa o usuário; sem ele o recorte é a igreja, como nas outras leituras.
-  if (actor?.userId && !isActiveMember(actor.userId, churchId)) return []
-  return sortByName(
-    branches.filter((b) => b.church_id === churchId).map((b) => pickColumns(b, BRANCH_COLUMNS)),
-  )
-}
-
-function isActiveMember(userId: string, churchId: string): boolean {
-  return members.some((m) => m.user_id === userId && m.church_id === churchId && m.status === 'active')
+  let query = supabase.from('church_branches').select(BRANCH_COLUMNS.join(',')).order('name')
+  if (!everyChurch) query = query.eq('church_id', churchId!)
+  const { data, error } = await query
+  if (error) throw new Error(error.message)
+  return (data ?? []) as unknown as ChurchBranch[]
 }
 
 export function validateBranchDraft(draft: BranchDraft): string | null {
@@ -139,11 +119,6 @@ export async function createBranch(draft: BranchDraft, actor: BranchActor): Prom
     leader: cleanText(draft.leader),
   }
 
-  if (!supabase) {
-    branches.push(row)
-    return { ok: true, branch: pickColumns(row, BRANCH_COLUMNS) }
-  }
-
   const { data, error } = await supabase
     .from('church_branches')
     .insert(pickKeys(row, BRANCH_INSERT_COLUMNS))
@@ -170,13 +145,6 @@ export async function updateBranch(id: string, draft: BranchDraft, actor: Branch
     leader: cleanText(draft.leader),
   }
 
-  if (!supabase) {
-    const found = demoEditableBranch(id, actor)
-    if (!found) return { ok: false, error: BRANCH_NOT_FOUND }
-    Object.assign(found, patch)
-    return { ok: true, branch: pickColumns(found, BRANCH_COLUMNS) }
-  }
-
   const { data, error } = await supabase
     .from('church_branches')
     .update(patch)
@@ -194,25 +162,10 @@ function gateWrite(actor: BranchActor): string | null {
   return can(actor.role, 'church.manage') ? null : BRANCH_MANAGE_DENIED
 }
 
-/** Espelha USING + WITH CHECK de `church_branches_update`, com o SuperAdmin transversal. */
-function demoEditableBranch(id: string, actor: BranchActor): ChurchBranch | undefined {
-  const found = branches.find((b) => b.id === id)
-  if (!found) return undefined
-  if (actor.role === 'superadmin') return found
-  return found.church_id === actor.churchId ? found : undefined
-}
-
 /** Vazio vira null: é o que a coluna guarda e o que a tela mostra como "—". */
 function cleanText(value?: string | null): string | null {
   const text = value?.trim()
   return text ? text : null
-}
-
-function pickColumns(branch: ChurchBranch, columns: readonly (keyof ChurchBranch)[]): ChurchBranch {
-  const source = branch as unknown as Record<string, unknown>
-  const out: Record<string, unknown> = {}
-  for (const column of columns) out[column] = source[column]
-  return out as unknown as ChurchBranch
 }
 
 function pickKeys(row: object, columns: readonly string[]): Record<string, unknown> {
@@ -220,10 +173,6 @@ function pickKeys(row: object, columns: readonly string[]): Record<string, unkno
   const out: Record<string, unknown> = {}
   for (const column of columns) out[column] = source[column]
   return out
-}
-
-function sortByName(rows: ChurchBranch[]): ChurchBranch[] {
-  return [...rows].sort((a, b) => a.name.localeCompare(b.name))
 }
 
 function describeBranchDbError(error: { code?: string; message: string }): string {

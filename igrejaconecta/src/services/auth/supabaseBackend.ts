@@ -24,10 +24,7 @@ function translateAuthError(message: string): string {
  * pelas políticas RLS, nunca por este código. service_role nunca é usado.
  */
 export function createSupabaseBackend(): AuthBackend {
-  const client: SupabaseClient = (() => {
-    if (!supabase) throw new Error('Supabase não configurado: defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no .env.local.')
-    return supabase
-  })()
+  const client: SupabaseClient = supabase
 
   const listeners = new Set<(s: Session | null) => void>()
   // Fator aguardando o código de 6 dígitos na tela de login.
@@ -76,7 +73,6 @@ export function createSupabaseBackend(): AuthBackend {
   }
 
   return {
-    mode: 'supabase',
 
     async restore() {
       const { data } = await client.auth.getSession()

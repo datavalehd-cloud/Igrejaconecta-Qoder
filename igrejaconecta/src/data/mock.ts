@@ -10,7 +10,6 @@ import type {
   Ministry,
   Profile,
   Registration,
-  SocialAccount,
 } from '@/types'
 
 export const categories: EventCategory[] = [
@@ -123,11 +122,33 @@ export const branches: ChurchBranch[] = [
   { id: 'b3', church_id: 'ch2', name: 'Campus Aquarius', city: 'São José dos Campos', state: 'SP', address: 'Av. Heitor Villa-Lobos, 900', lat: -23.2099, lng: -45.9061, leader: 'Pr. Tiago Reis' },
 ]
 
+// Shape da view `ministry_list`: `leader_id` + `leader_name` + contagem. Os
+// líderes são gente **ativa** da própria igreja de propósito — a guarda da 0021
+// não deixaria ser de outro jeito, e um fixture que viola o banco só faria os
+// testes de espelho mentirem.
 export const ministries: Ministry[] = [
-  { id: 'm1', church_id: 'ch1', name: 'Ministério de Louvor', type: 'ministry', leader: 'Juliana Prado', members_count: 14 },
-  { id: 'm2', church_id: 'ch1', name: 'Jovens (UJC)', type: 'team', leader: 'Pedro Alves', members_count: 42 },
-  { id: 'm3', church_id: 'ch1', name: 'Ação Social', type: 'department', leader: 'Rita Campos', members_count: 9 },
-  { id: 'm4', church_id: 'ch1', name: 'Comunicação', type: 'team', leader: 'Lucas Moreira', members_count: 6 },
+  { id: 'm1', church_id: 'ch1', type: 'ministry', name: 'Ministério de Louvor', description: 'Escalas de culto e ensaios.', leader_id: 'u2', leader_name: 'Ana Souza', members_count: 3, created_at: '2026-01-20', updated_at: '2026-10-01' },
+  { id: 'm2', church_id: 'ch1', type: 'team', name: 'Jovens (UJC)', description: null, leader_id: 'u1', leader_name: 'Marcos Lima', members_count: 2, created_at: '2026-02-02', updated_at: '2026-02-02' },
+  { id: 'm3', church_id: 'ch1', type: 'department', name: 'Ação Social', description: 'Cestas, visitas e campanhas.', leader_id: null, leader_name: null, members_count: 0, created_at: '2026-03-11', updated_at: '2026-03-11' },
+  { id: 'm4', church_id: 'ch1', type: 'team', name: 'Comunicação', description: null, leader_id: 'u5', leader_name: 'Paula Diniz', members_count: 1, created_at: '2026-11-06', updated_at: '2026-11-06' },
+  { id: 'm5', church_id: 'ch2', type: 'ministry', name: 'Louvor Vida Nova', description: null, leader_id: 'u4', leader_name: 'Tiago Reis', members_count: 1, created_at: '2026-02-05', updated_at: '2026-02-05' },
+]
+
+export interface MockMinistryMember {
+  ministry_id: string
+  user_id: string
+}
+
+// `ministry_members` é só o par (ministério, pessoa). Os nomes que a tela mostra
+// vêm do roster, nunca daqui. Os conteudos batem com `members_count` acima.
+export const ministryMembers: MockMinistryMember[] = [
+  { ministry_id: 'm1', user_id: 'u1' },
+  { ministry_id: 'm1', user_id: 'u2' },
+  { ministry_id: 'm1', user_id: 'u5' },
+  { ministry_id: 'm2', user_id: 'u1' },
+  { ministry_id: 'm2', user_id: 'u2' },
+  { ministry_id: 'm4', user_id: 'u5' },
+  { ministry_id: 'm5', user_id: 'u4' },
 ]
 
 export const members: ChurchMember[] = [
@@ -157,19 +178,9 @@ export const registrations: Registration[] = [
 
 export const campaigns: Campaign[] = [
   { id: 'cp1', church_id: 'ch1', event_id: 'e1', name: 'Divulgação Congresso de Jovens', message: 'Vem aí o Congresso de Jovens 2026! Inscrições abertas no link.', networks: ['instagram', 'facebook', 'whatsapp'], status: 'scheduled', scheduled_for: '2026-12-10T09:00:00', created_at: '2026-11-06T10:00:00' },
-  { id: 'cp2', church_id: 'ch1', event_id: 'e2', name: 'Vigília — contagem regressiva', message: 'Noite de intercessão pela cidade e pelas famílias. Participe da vigília.', networks: ['instagram', 'tiktok'], status: 'draft', created_at: '2026-11-07T14:30:00' },
+  { id: 'cp2', church_id: 'ch1', event_id: 'e2', name: 'Vigília — contagem regressiva', message: 'Noite de intercessão pela cidade e pelas famílias. Participe da vigília.', networks: ['instagram', 'facebook'], status: 'draft', created_at: '2026-11-07T14:30:00' },
   { id: 'cp3', church_id: 'ch1', event_id: 'e4', name: 'Ação Social de Natal', message: 'Distribuição de cestas e atendimento gratuito à comunidade.', networks: ['facebook', 'whatsapp'], status: 'scheduled', scheduled_for: '2026-12-05T18:00:00', created_at: '2026-11-08T09:15:00' },
   { id: 'cp4', church_id: 'ch2', event_id: 'e3', name: 'Florescer — convite mulheres', message: 'Tarde especial com louvor, palavra e comunhão.', networks: ['instagram'], status: 'draft', created_at: '2026-11-08T16:45:00' },
-]
-
-// Nenhuma conta aparece como conectada: conectar de verdade exige OAuth + backend
-// com tokens, que não existem neste ambiente. Estado confirmado pelo provedor é o
-// único que pode dizer "conectado" — enquanto não há, é tudo desconectado.
-export const socialAccounts: SocialAccount[] = [
-  { id: 'sa1', network: 'instagram', label: '@ibcentral', connected: false },
-  { id: 'sa2', network: 'facebook', label: 'Igreja Batista Central', connected: false },
-  { id: 'sa3', network: 'tiktok', label: '@ibcentral.jovens', connected: false },
-  { id: 'sa4', network: 'whatsapp', label: '+55 12 99999-0001', connected: false },
 ]
 
 export const aiGenerations: AIGeneration[] = [

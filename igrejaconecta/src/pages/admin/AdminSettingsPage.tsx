@@ -1,6 +1,6 @@
 import { ShieldCheck, Database, Bell, Lock } from 'lucide-react'
 import { PageHeader, Card, CardHeader, CardBody, Field, Input, Select, Badge } from '@/components/common/primitives'
-import { isSupabaseConfigured } from '@/services/supabase/client'
+import { supabaseHost } from '@/services/supabase/client'
 
 /**
  * O cartão Segurança mostra o que o banco e o código aplicam de fato: RLS ligado
@@ -35,7 +35,7 @@ export function AdminSettingsPage() {
             <Row icon={<ShieldCheck className="h-4 w-4 text-green-600" />} label="MFA para administradores"><Badge tone="green">Obrigatório</Badge></Row>
             <Row icon={<ShieldCheck className="h-4 w-4 text-brand-600" />} label="service_role no frontend"><Badge tone="red">Bloqueado</Badge></Row>
             <Row icon={<Bell className="h-4 w-4 text-slate-400" />} label="Alertas de tentativas suspeitas"><Badge tone="neutral">Não conectado</Badge></Row>
-            <Row icon={<Database className="h-4 w-4 text-brand-600" />} label="Supabase conectado"><Badge tone={isSupabaseConfigured ? 'green' : 'amber'}>{isSupabaseConfigured ? 'Sim' : 'Modo demo'}</Badge></Row>
+            <Row icon={<Database className="h-4 w-4 text-brand-600" />} label="Backend de dados (Supabase)"><Badge tone="green">{supabaseHost}</Badge></Row>
           </CardBody>
         </Card>
 

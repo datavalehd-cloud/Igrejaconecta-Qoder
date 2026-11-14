@@ -1,5 +1,4 @@
 import { supabase } from '@/services/supabase/client'
-import { churches, members } from '@/data/mock'
 import type { PlatformUser, RoleKey } from '@/types'
 
 /**
@@ -15,7 +14,7 @@ import type { PlatformUser, RoleKey } from '@/types'
  *
  * A projeção faz parte do contrato: a RLS é por linha e deixaria ler a linha
  * inteira de `church_members`/`profiles`; o que limita as colunas que chegam ao
- * navegador é o `select` abaixo, congelado e comparado com o espelho demo nos
+ * navegador é o `select` abaixo, congelado e comparado com o espelho de teste nos
  * testes. `role_id`, `created_at` e o resto de `profiles` (telefone, avatar) ficam
  * de fora — a tela de gestão global precisa de nome, e-mail, papel, igreja e status.
  */
@@ -44,34 +43,15 @@ interface PlatformUserRow {
  */
 export async function fetchPlatformUsers(role?: RoleKey): Promise<PlatformUser[]> {
   if (role !== 'superadmin') return []
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('church_members')
-      .select(PLATFORM_USER_SELECT)
-      .order('created_at')
-    if (error) throw new Error(error.message)
-    return ((data ?? []) as unknown as PlatformUserRow[])
-      // Vínculo sem igreja confirmada pela RLS não vira linha: não se inventa nome.
-      .filter((row) => row.churches !== null)
-      .map(toPlatformUser)
-  }
-  return demoPlatformUsers(role)
-}
-
-/** Espelha `church_members_read` + `profiles_self_read` no ramo `is_superadmin()`. */
-export function demoPlatformUsers(role?: RoleKey): PlatformUser[] {
-  if (role !== 'superadmin') return []
-  return members
-    .filter((m) => m.user !== undefined)
-    .map((m) => ({
-      user_id: m.user_id,
-      church_id: m.church_id,
-      status: m.status,
-      role: m.role ?? 'visitor',
-      church_name: churches.find((c) => c.id === m.church_id)?.name ?? null,
-      name: m.user!.full_name,
-      email: m.user!.email,
-    }))
+  const { data, error } = await supabase
+    .from('church_members')
+    .select(PLATFORM_USER_SELECT)
+    .order('created_at')
+  if (error) throw new Error(error.message)
+  return ((data ?? []) as unknown as PlatformUserRow[])
+    // Vínculo sem igreja confirmada pela RLS não vira linha: não se inventa nome.
+    .filter((row) => row.churches !== null)
+    .map(toPlatformUser)
 }
 
 /** Usuários distintos (uma pessoa conta uma vez, ainda que seja de várias igrejas). */

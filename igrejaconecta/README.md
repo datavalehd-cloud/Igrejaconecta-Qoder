@@ -3,7 +3,7 @@
 Plataforma que conecta igrejas e visitantes: gestão de eventos, localização, divulgação
 digital e inteligência artificial. **Sem cobrança, assinaturas ou faturamento** nesta versão.
 
-> Status atual: **Fase 1 fechada (Auth real plugável + isolamento verificado), Fase 2 escrevendo
+> Status atual: **Fase 1 fechada (Auth real no Supabase + isolamento verificado), Fase 2 escrevendo
 > no banco, Fase 3 com eventos e inscrições reais, Fase 4 com filiais, localização e mapa real,
 > Fase 5 com campanhas de divulgação no banco + distribuição sem chave, Fase 6 com o gerador
 > local de texto de campanha (sem IA e sem chave), Fase 7 com automações em simulação local
@@ -12,7 +12,7 @@ digital e inteligência artificial. **Sem cobrança, assinaturas ou faturamento*
 > sem migração nem política nova, e o que não existe diz "não conectado"** —
 > Supabase Auth (login, cadastro, recuperação,
 > confirmação, redefinição e MFA TOTP) ligado por uma camada única (`AuthBackend`); a suíte de RLS
-> roda num Postgres real com `npm run test:rls` (827 declarações, grupos A–P, sem Docker e sem projeto).
+> roda num Postgres real com `npm run test:rls` (1052 declarações, grupos A–U, sem Docker e sem projeto).
 > A tela de **Usuários** lê a view `church_roster` e escreve de verdade: convite por e-mail,
 > cancelamento, mudança de papel e aceite (`memberService`, migração 0008). O SuperAdmin **aprova,
 > rejeita, suspende e reativa** de verdade (`churchApprovalService`), e o efeito é o que a suíte mede:
@@ -56,9 +56,20 @@ digital e inteligência artificial. **Sem cobrança, assinaturas ou faturamento*
 > favicon**, não redesenhados; `useDocumentMeta` aplica title/canonical/robots/JSON-LD por rota
 > (schema.org/Event no detalhe, `noindex` em login e painéis); e um service worker que pré-cacheia o
 > shell, só registra em produção e **nunca cacheia dado de provedor nem `/app`/`/admin`**. Tudo pelo
-> mesmo interruptor
-> demo/real. Sem chaves no `.env.local` o app roda em **modo demo** com dados fictícios; com as
-> chaves, usa o provedor real sem mudar uma linha de tela.
+> mesmo caminho de código.
+> **Não há modo demo**: sem as duas chaves no `.env.local` o app não sobe — `client.ts` lança antes
+> de qualquer render, e nenhum dado fictício chega à tela. O que existia de mock virou fixture de teste.
+> **Rodada M (2026-11-13)**: as migrações 0015..0021 deram origem real a ministérios/equipe, perfis de
+> rede social, favoritos do visitante, organizações, suporte e eventos de segurança (grupos Q..U da
+> suíte), a 0021 fechou um oráculo "uuid → nome" que a 0015 tinha deixado aberto, `/app/ministerios`
+> e `/app/redes` já leem **e escrevem** o banco (M3a e M3b) e o perfil institucional e o perfil pessoal
+> gravam de verdade (M3c) — saiu o CNPJ inventado, o "Responsável" de enfeite e o card de redes que não
+> salvava nada. E desde o M3d o `/visitante/perfil` também: o coração da página de evento grava em
+> `visitor_favorites`, cidade e interesses gravam em `visitor_preferences` (as duas da 0016) e o
+> histórico sai de `event_registrations` pelo id da sessão — **nenhum arquivo de `src/` importa a loja
+> de mocks** (medido no `dist/`: nenhum dado fictício no bundle). O TikTok saiu do aplicativo inteiro — nem
+> perfil nem campanha oferecem a rede. 0015..0021 rodam no Postgres embarcado; no projeto que está no
+> ar elas entram no passo M7 (com a 0020 casada com a saída do TikTok da tela).
 
 ## Stack
 
@@ -66,7 +77,7 @@ digital e inteligência artificial. **Sem cobrança, assinaturas ou faturamento*
 - Vite 8
 - Tailwind CSS 4
 - React Router 7
-- Supabase (Auth + PostgreSQL + Storage) — plugável via `.env.local`
+- Supabase (Auth + PostgreSQL + Storage) — obrigatório; as chaves públicas entram no build pelo `.env.local`
 - lucide-react (ícones)
 
 ## Identidade visual
@@ -88,23 +99,26 @@ Tokens definidos em `src/index.css` (`@theme`). Logotipo textual em
 npm install
 npm run dev        # http://localhost:5173
 npm run build      # type-check + build de produção
-npm test           # 381 testes unitários (Vitest): RBAC, utils, serviços, motores locais e o contrato das migrações
+npm test           # 613 testes unitários (Vitest): RBAC, utils, serviços, motores locais e o contrato das migrações
 npm run test:rls   # suíte de isolamento num Postgres embarcado (sem Docker, sem projeto Supabase)
 ```
 
-### Contas de demonstração (senha: `demo1234`)
+### Contas
 
-| E-mail | Papel | Acesso |
-|--------|-------|--------|
-| `admin@igrejaconecta.app` | SuperAdmin | `/admin` (exige MFA — qualquer código de 6 dígitos no demo) |
-| `marcos@ibcentral.org.br` | Administrador da igreja | `/app` (exige MFA) |
-| `ana@ibcentral.org.br` | Gerente | `/app` |
-| `paula@ibcentral.org.br` | Comunicador | `/app` — cria e edita evento, **não** publica; sem inscrições |
-| `visitante@email.com` | Visitante | portal público |
+Não existe conta padrão nem senha embutida: conta, papel e igreja vêm **só do banco**.
 
-No painel, o menu do usuário permite **trocar de papel** para explorar as telas e validar RBAC.
+- `/cadastro` cria a pessoa (`signUp`, com confirmação de e-mail se o projeto exigir).
+- `/app/onboarding` cria a igreja e o trigger 0006 coloca quem cadastrou como `church_admin` dela.
+- Colegas entram pelo convite da tela Usuários (0008); o aceite dá o papel convidado, nunca `superadmin`.
+- SuperAdmin não se auto-promove (guarda 0005). Promova com `supabase/promote_superadmin.sql`,
+  que exige vínculo ativo em alguma igreja.
+- Não há menu de trocar de papel: o papel é o que `church_members`/`roles` dizem da conta.
 
-## Conectando o Supabase (sair do modo demo)
+As contas que existiam aqui (`admin@igrejaconecta.app`, `marcos@ibcentral.org.br`, senha `demo1234`)
+eram do modo demo e saíram do aplicativo junto com `demoBackend.ts` e `authService.ts`. Para validar
+RBAC hoje, use contas reais distintas ou o convite com o papel desejado.
+
+## Conectando o Supabase (obrigatório — sem isto o app não abre)
 
 1. Crie um projeto no Supabase.
 2. Copie `.env.example` para `.env.local` e preencha **você mesmo** (as chaves não devem
@@ -129,10 +143,22 @@ No painel, o menu do usuário permite **trocar de papel** para explorar as telas
    - `supabase/migrations/0012_event_registrations.sql`
    - `supabase/migrations/0013_branches_location.sql`
    - `supabase/migrations/0014_marketing_campaigns.sql`
+   - `supabase/migrations/0015_ministries_and_social_accounts.sql`
+   - `supabase/migrations/0016_visitor_favorites_preferences.sql`
+   - `supabase/migrations/0017_church_networks.sql`
+   - `supabase/migrations/0018_support_tickets.sql`
+   - `supabase/migrations/0019_security_events.sql`
+   - `supabase/migrations/0020_drop_tiktok_from_campaigns.sql`
+   - `supabase/migrations/0021_ministry_membership_guard.sql`
+
+   No projeto que está no ar (`dlucvyjxidrfyjwuouvp`) **0001..0014 e o seed já foram aplicados**;
+   0015..0021 ainda não — é o que falta para as telas de ministérios, favoritos, organizações,
+   suporte e alertas lerem do banco em produção (sem elas a consulta responde `42P01`).
 4. **Obrigatório — rode `supabase/seed.sql` no SQL Editor.** Sem ele o esquema existe mas a matriz
    RBAC não: `permissions` e `role_permissions` ficam vazios, `has_church_permission()` devolve
    `false` para todo mundo que não é SuperAdmin, e **toda** escrita gateada por permissão (evento,
-   campanha, membro, convite, filial, inscrição, edição da igreja) cai em `403 / 42501`; o roster ainda
+   campanha, membro, convite, filial, inscrição, ministério, perfil de rede, edição da igreja) cai em
+   `403 / 42501`; o roster ainda
    volta com e-mail e telefone mascarados. O sintoma engana porque o cadastro de igreja e a leitura
    continuam funcionando — só a primeira escrita de evento falha. Detalhes em
    [Seed obrigatório](#seed-obrigatório-papéis-permissões-e-matriz-rbac).
@@ -147,8 +173,9 @@ No painel, o menu do usuário permite **trocar de papel** para explorar as telas
    registre a associação em `church_members` com o `role_id` correspondente ao papel. Sem
    associação ativa, o usuário entra como **visitante**. (`supabase/promote_superadmin.sql` faz isso
    para o dono da conta; ele exige vínculo ativo em alguma igreja.)
-8. Reinicie o dev server. `src/services/supabase/client.ts` detecta as chaves e o
-   `AuthContext` troca automaticamente para o backend real.
+8. Reinicie o dev server **depois** de preencher as chaves: elas entram no build, não em tempo de
+   execução. Falta alguma, `src/services/supabase/client.ts` lança na carga do módulo e a tela fica
+   branca com o erro no console — não há segunda metade para "cair" quando o banco não está ligado.
 
 ### Seed obrigatório (papéis, permissões e matriz RBAC)
 
@@ -175,6 +202,9 @@ para qualquer não-SuperAdmin, porque o join não acha permissão nenhuma. Quem 
 | `event_registrations` + RPCs (0012) | `registrations.manage` | lista de inscrições, check-in, cancelamento |
 | `church_branches` (0013) | `church.manage` | criar/editar filial |
 | `marketing_campaigns` (0014) | `marketing.manage` | criar/editar campanha |
+| `ministries` + `ministry_members` (0015) | `members.manage` | criar, editar, apagar ministério e mexer na equipe |
+| `church_social_accounts` (0015) | `church.manage` | gravar/remover o @handle de uma rede |
+| `support_tickets` / `support_messages` (0018) | `church.manage` | o administrador da igreja assunto do chamado não lê o ticket |
 
 Em todos os casos o banco responde `403 {"code":"42501","message":"new row violates row-level
 security policy for table …"}`. A mensagem é idêntica à de uma violação real do `WITH CHECK`, o que faz
@@ -198,16 +228,20 @@ usa `has_church_permission`), a aprovação pelo SuperAdmin funcionava (SuperAdm
 `42501`. Depois de rodar o seed: 11 / 6 / 33, `has_church_permission(…) → true`, e o evento foi
 criado com `201`.
 
-### O que muda do demo para o real
+### O que cada fluxo faz no aplicativo e o que o fixture espelha
 
-| Fluxo | Modo demo | Modo Supabase |
-|-------|-----------|---------------|
-| Login | contas fixas + qualquer código de 6 dígitos | `signInWithPassword`; MFA real via `challengeAndVerify` |
-| Papel / igreja | tabela fixa | lido de `profiles` + `church_members`/`roles` (sob RLS) |
-| Cadastro | sempre "envia e-mail" | `signUp`; pula a confirmação se o projeto não exige |
-| Recuperação | simulada | `resetPasswordForEmail` + página `/redefinir-senha` (`updateUser`) |
-| MFA | sempre "ativo" para admin | QR Code + segredo reais em `/app/perfil`; sem fator ativo o painel fica bloqueado |
-| Trocar papel | menu no topo | oculto (não faz sentido com contas reais) |
+Desde o passo M1 o aplicativo **só** fala com o Supabase. As colunas abaixo são as duas metades que
+restaram do antigo modo demo: à esquerda, o espelho em memória que agora vive em `tests/fixtures/*Mirror.ts`
+e serve para os testes unitários especificarem a regra; à direita, o que roda no navegador.
+
+| Fluxo | Fixture de teste (`tests/fixtures`) | Aplicativo (Supabase) |
+|-------|-------------------------------------|------------------------|
+| Login | — (removido: `demoBackend.ts` apagado) | `signInWithPassword`; MFA real via `challengeAndVerify` |
+| Papel / igreja | — (removido: `authService.ts` apagado) | lido de `profiles` + `church_members`/`roles` (sob RLS) |
+| Cadastro | — (era sempre "envia e-mail") | `signUp`; pula a confirmação se o projeto não exige |
+| Recuperação | — (era simulada) | `resetPasswordForEmail` + página `/redefinir-senha` (`updateUser`) |
+| MFA | — (era sempre "ativo" para admin) | QR Code + segredo reais em `/app/perfil`; sem fator ativo o painel fica bloqueado |
+| Trocar papel | — (menu do demo saiu da UI) | não existe: o papel vem do vínculo ativo |
 | Roster da igreja | `demoRoster` com a mesma regra da view | `select` em `church_roster` (0007) |
 | Listas de igrejas | `demoDirectoryChurches` / `demoManagedChurches` / `demoMyChurches`, com o mesmo filtro e a mesma projeção | `select` de `churches` (ou do embed `church_members → churches`) com a lista de colunas de `churchService`; a visibilidade é decidida por `churches_public_read` |
 | Convite / papel / aceite | loja em memória do módulo, com as mesmas recusas | `church_invitations` + RPCs `pending_invitations_for_me` / `accept_church_invitation` (0008) |
@@ -218,10 +252,12 @@ criado com `201`.
 | Inscrição do visitante | `demoRegisterForEvent` com as mesmas recusas e a mesma fila por capacidade | RPC `register_for_event` (0012): o visitante é `anon` e não tem grant de escrita na tabela |
 | Lista de inscrições / CSV | `demoChurchRegistrations(churchId)`, e papel sem `registrations.manage` não recebe nada | `select` de `event_registrations` com a projeção `REGISTRATION_SELECT`; a política `event_registrations_read` é a guarda |
 | Check-in / cancelamento | `demoCheckIn` / `demoCancelRegistration`, exigindo `registrations.manage` e promovendo a fila | RPCs `check_in_registration` / `cancel_event_registration` (0012), que conferem permissão **antes** de revelar se a inscrição existe |
-| Quem pode escrever | checado na loja demo (`members.manage`) | decidido pelo RLS e pelos triggers; o erro do banco é o que aparece |
+| Ministérios e equipe | `demoMinistries` / `demoCreateMinistry` / `demoAddMinistryMember`, com `guardPerson()` reproduzindo a 0021 (referência antes de audiência) e `members_count` derivado de `ministry_members` | `select` em `ministry_list` (0015) + escritas em `ministries` / `ministry_members` pela porta `members.manage` (`ministryService`) |
+| Quem pode escrever | checado na loja do fixture (`members.manage`) | decidido pelo RLS e pelos triggers; o erro do banco é o que aparece |
 
-Em modo demo as escritas vivem **só enquanto a página estiver aberta** (memória do módulo, sem
-`localStorage`): o recarregar volta aos mocks. O caminho real é o que a suíte de RLS prova.
+As escritas do fixture vivem **só enquanto o teste roda** (memória do módulo, sem `localStorage`):
+são espelho para a suíte unitária, não caminho do aplicativo. No navegador tudo que muda é o que o
+Supabase gravou, e é a suíte de RLS que prova quem pode ver e escrever o quê.
 
 Sessão iniciada em `aal1` (sem MFA confirmado) **não** abre `/app` nem `/admin` para
 SuperAdmin/Administrador da igreja: o `ProtectedRoute` manda ativar o MFA em `/app/perfil`
@@ -254,10 +290,10 @@ src/
                  # robots e JSON-LD por rota, aplicando o utils/seo.ts no <head>, Fase 9)
   config/        # site.ts — identidade canônica do site (URL, nome, tagline, descrição, cores,
                  # locale); alimenta canonical, OG, sitemap, manifest e JSON-LD (Fase 9)
-  contexts/      # AuthContext (sessão + RBAC, backend plugável demo/Supabase)
+  contexts/      # AuthContext (sessão + RBAC; uma implementação de backend: Supabase)
   services/
-    supabase/    # client plugável
-    auth/        # authTypes (contrato) + demoBackend + supabaseBackend + authService
+    supabase/    # client — único ponto que lê as chaves; lança se faltar alguma
+    auth/        # authTypes (contrato) + supabaseBackend (a única implementação)
     data/        # rosterService (view church_roster), memberService (convites, papéis, aceite),
                  # churchService (diretório público, lista de gestão, igrejas da conta e o
                  # createChurch do onboarding — pending + slug único),
@@ -265,18 +301,32 @@ src/
                  # auditService (verbos e leitura da trilha; a escrita real é do trigger 0009),
                  # eventService (diretório público, evento por slug, agenda da igreja, categorias e a
                  # agenda global do SuperAdmin), registrationService (inscrição do visitante, lista da
-                 # equipe, contagens, check-in e cancelamento — toda escrita por RPC) e adminService
-                 # (diretório global de vínculos do SuperAdmin, Fase 8 — gate + projeção congelada)
+                 # equipe, contagens, check-in e cancelamento — toda escrita por RPC), branchService
+                 # (filiais da 0013, sem delete), marketingService (campanhas da 0014, publicar bloqueado
+                 # no banco), adminService
+                 # (diretório global de vínculos do SuperAdmin, Fase 8 — gate + projeção congelada),
+                 # ministryService (ministérios e equipe pela view `ministry_list` da 0015, com a
+                 # audiência de líder/participante fechada pela 0021 — M3a), socialAccountService
+                 # (perfis de rede da 0015, @handle editável e `connected` travado no banco — M3b),
+                 # churchProfileService (cadastro institucional: 13 colunas editáveis, `slug`/`status`/
+                 # `approval_status`/`created_by` fora do patch — M3c) e myProfileService (nome e
+                 # telefone da própria conta; e-mail, id e avatar nunca — M3c),
+                 # visitorFavoriteService (o par (conta, evento) em `visitor_favorites`: insert/delete
+                 # pela PK composta, sem UPDATE porque a tabela não tem) e visitorPreferenceService
+                 # (cidade e interesses em `visitor_preferences`, upsert pela chave da conta — M3d)
   types/         # modelo de domínio
   utils/         # rbac, format, cn, geo (haversine/distância), share (distribuição sem chave),
                  # campaignText (gerador local de texto, Fase 6), automationEngine (motor local de
                  # simulação de automações, Fase 7) e reports (agregação + CSV do relatório global do
                  # SuperAdmin, Fase 8) e seo (canonical, OG/Twitter, robots e JSON-LD puros, Fase 9)
                  # — os quatro últimos sem chave, sem provedor e sem fetch
-  data/          # mocks
+  data/          # loja de mocks: desde o M3d **nenhum arquivo de `src/` a importa** — só os fixtures de
+                 # `tests/`. O arquivo ainda está aqui (o M3e é movê-lo); no bundle ele já não existe
+                 # (medido em `dist/`: `Camila Torres`, `Congresso de Jovens 2026` e o resto da loja não
+                 # aparecem no JS gerado).
   routes/        # AppRoutes + guards (ProtectedRoute)
 supabase/
-  migrations/    # schema + RLS + storage + hardening + guards (0001..0014)
+  migrations/    # schema + RLS + storage + hardening + guards (0001..0021)
   functions/     # Edge Functions (fases 5-8, a implementar)
   tests/
     database/    # rls_isolation.sql — suíte de isolamento (roda local e no projeto)
@@ -290,16 +340,36 @@ scripts/
 public/
   favicon.svg + icon-192/512.png, maskable-512.png, apple-touch-icon.png, og-image.png  # marca (Fase 9)
   robots.txt, sitemap.xml, manifest.webmanifest, sw.js  # SEO/PWA crawler-visible (Fase 9)
-tests/           # unit / integration / e2e
-  unit/          # rbac, format, roster, memberWrites, churchLists, events (paridade demo x RLS,
+tests/           # unit + fixtures
+  fixtures/      # *Mirror.ts — os espelhos em memória que o modo demo usava, agora só de teste
+                 # (admin, branch, church, event, marketing, member, ministry, registration, roster,
+                 # social). Leem `src/data/mock` e importam as constantes e mensagens dos serviços, para
+                 # não derivarem regra própria. Nenhum caminho do aplicativo passa por aqui.
+  unit/          # rbac, format, roster, memberWrites, churchLists, events (paridade fixture × RLS,
                  # projeções e anti-deriva contra os grupos I/M), registrations (contrato da 0012,
-                 # projeção, RPCs e loja demo contra o grupo N), churchApproval, auditTrail,
-                 # geo (haversine/distância) e branches (Fase 4, grupo O), marketing (Fase 5, grupo P)
+                 # projeção, RPCs e loja do fixture contra o grupo N), churchApproval, auditTrail,
+                 # geo (haversine/distância) e branches (Fase 4, grupo O), marketing (Fase 5, grupo P),
+                 # ministries (M3a: projeção comparada com o texto da view, gates, espelho da 0021,
+                 # contrato de escrita e mensagens do banco — sem oráculo de existência)
+                 # socialAccounts (M3b: projeção e as duas listas de rede comparadas ao texto dos
+                 # CHECKs, gate church.manage, payload sem `connected` e o espelho do trigger)
+                 # profiles (M3c: as colunas editáveis + as travadas cobrindo a tabela inteira, o patch
+                 # literal conferido contra a 0001, o gate church.manage antes de consultar, a coordenada
+                 # fora do CHECK e, no perfil pessoal, exatamente nome e telefone — nunca e-mail, id ou
+                 # avatar, e nenhuma exceção de SuperAdmin)
+                 # visitorProfile (M3d: as projeções comparadas coluna a coluna ao CREATE TABLE da 0016,
+                 # os interesses e a cidade conferidos contra os CHECKs escritos na migração, o insert
+                 # literal do favorito sem `created_at`, o delete pela PK composta sem oráculo de
+                 # existência, o upsert `onConflict: 'user_id'` das preferências, o gate de sessão antes
+                 # de qualquer consulta e o histórico recortado por `user_id` com o slug do embed)
                  # e share (distribuição sem chave), campaignText (Fase 6, gerador local) e
                  # automationEngine (Fase 7, motor de simulação — inclusive a fronteira "nenhum segredo
                  # na fonte"), admin (Fase 8, leituras globais: gate superadmin, projeção anti-deriva,
                  # políticas reais que amparam a leitura, agregação e CSV) e schemaSecurity (guarda do
-                 # service_role) e seo (Fase 9: canonical/OG/robots/JSON-LD puros + presença e
+                 # service_role + a cerca estrutural que não deixa um ramo demo voltar: nenhum serviço
+                 # importa `@/data/mock`, nenhum tem `if (!supabase)`, a auth só tem uma implementação,
+                 # o client recusa subir sem as duas chaves e **nenhum arquivo de `src/` importa a loja
+                 # de mocks** (era uma allowlist que só encolhia; zerou no M3d e virou proibição) e seo (Fase 9: canonical/OG/robots/JSON-LD puros + presença e
                  # anti-deriva dos estáticos index.html, robots, sitemap, manifest, sw e main)
 ```
 
@@ -340,9 +410,9 @@ consulta) e por isso a view é marcada `security_invoker = false` de forma expl�
 caller, não do dono. Anon não tem `select` na view.
 
 **Primeiro consumo (Fase 2, passo 1):** a tela **Usuários** (`/app/usuarios`) agora lê esse roster por
-`src/services/data/rosterService.ts` — no modo real `select ... from church_roster where church_id =
-sessão`, no modo demo `demoRoster()` com a **mesma** regra (só ativos, contatos mascarados sem
-`members.manage`), para que a demo não mostre nada que o banco não mostraria. A rota **deixou de exigir
+`src/services/data/rosterService.ts` — `select ... from church_roster where church_id = sessão`; o
+espelho `demoRoster()` (hoje em `tests/fixtures/rosterMirror.ts`) tem a **mesma** regra (só ativos,
+contatos mascarados sem `members.manage`), para que a suíte prove a paridade com o que o banco mostra. A rota **deixou de exigir
 `members.manage`** no `ProtectedRoute`: quem segura a página é a view, não o guard, e um Gerente precisa
 ver os colegas para a decisão de LGPD fazer sentido. O que a permissão continua controlando é a escrita
 — o botão de convite, a coluna de ações e o card de convites só aparecem para quem tem `members.manage`;
@@ -370,8 +440,8 @@ Três decisões que valem registro:
 
 A UI não decide nada disso: em modo real o que aparece é a resposta do banco — inclusive os erros
 `42501` ("sem permissão") e `23505` ("já existe convite pendente"), mapeados para texto legível em
-`describeDbError`. Em modo demo a loja do módulo espelha as mesmas recusas, e `tests/unit/memberWrites.test.ts`
-confere cada espelho contra o caso de RLS correspondente. Reversão: `drop table public.church_invitations;
+`describeDbError`. O espelho `demo*` correspondente em `tests/fixtures/memberMirror.ts` tem as mesmas
+recusas, e `tests/unit/memberWrites.test.ts` confere cada espelho contra o caso de RLS correspondente. Reversão: `drop table public.church_invitations;
 drop function public.pending_invitations_for_me(); drop function public.accept_church_invitation(uuid);`
 — a tela de Usuários volta a ler o roster, mas convite/papel viram botão morto de novo.
 
@@ -396,17 +466,35 @@ PostgREST devolve `null` no embed e a linha é **descartada** — não se invent
 `church_id`. É por isso que convite ainda não aceito não aparece ali: o vínculo existe (e aparece em
 "Convites para você"), a igreja não. O caso I6 é essa frase escrita em SQL.
 
-Onde a ligação real teria introduzido uma mentira, a tela agora mostra `—`: a contagem de eventos do mapa,
-e os zeros de Eventos/Inscrições/Membros e "2 filiais cadastradas" no painel da igreja, porque essas
-tabelas ainda são mock em modo real. (Eventos passou a ler o banco na Fase 3, passo 1, Inscrições a ler
-e escrever no passo 2 e o formulário de eventos a escrever no passo 3; Membros, Campanhas e filiais
-seguem mock — e é só para elas que o `—` continua valendo.)
-Os botões Aprovar/Suspender/Rejeitar do SuperAdmin ficaram
-desabilitados com o motivo na tela durante este passo — a escrita deles é o passo 4, logo abaixo.
-Reversão: as telas voltam a `import { churches } from '@/data/mock'` (uma linha por tela) e o
-`churchService` fica parado sem efeito nenhum; para desfazer só a parte honesta dos `—`, troque
-`mode === 'supabase'` por `false` em `pendingWiring` (`ChurchDashboardPage`) e `countEvents`
-(`ChurchMapPage`) — o que ela volta a mostrar são números falsos.
+Onde a ligação real teria introduzido uma mentira, a tela mostrou `—`: a contagem de eventos do mapa e
+os zeros de Eventos/Inscrições/Membros e "2 filiais cadastradas" no painel da igreja, porque aquelas
+tabelas ainda eram mock em modo real. Eventos passou a ler o banco na Fase 3 (passo 1), Inscrições a ler
+e escrever no passo 2 e o formulário a escrever no passo 3; Membros, Campanhas e filiais passaram a ler
+no passo M1, então o `—` ficou só enquanto a consulta está em voo. Ministérios passaram a ler **e
+escrever** o banco no passo M3a (0015 + 0021 + `ministryService`) e os perfis de rede social no M3b
+(0015 + `socialAccountService`); o cadastro institucional e o perfil pessoal passaram a gravar de
+verdade no M3c — [src/services/data/churchProfileService.ts](src/services/data/churchProfileService.ts)
+e [src/services/data/myProfileService.ts](src/services/data/myProfileService.ts) sobre as tabelas e
+políticas que a 0001/0002 já traziam, com a 0004 travando `approval_status`. No M3d foi a vez do
+`/visitante/perfil` e do coração da página de evento:
+[src/services/data/visitorFavoriteService.ts](src/services/data/visitorFavoriteService.ts) e
+[src/services/data/visitorPreferenceService.ts](src/services/data/visitorPreferenceService.ts) sobre a
+0016, mais o histórico saindo de `event_registrations` pelo id da sessão (a mesma `event_registrations_read`
+da 0012). **Nenhuma tela do aplicativo lê `@/data/mock` desde então.**
+Os botões Aprovar/Suspender/Rejeitar do SuperAdmin ficaram desabilitados com o motivo na tela
+durante este passo — a escrita deles é o passo 4, logo abaixo.
+
+Reversão: no M3d já não existe "devolver uma linha de import" — `VisitorProfilePage` e o coração de
+`EventDetailPage` consomem [src/hooks/useVisitorProfile.ts](src/hooks/useVisitorProfile.ts) e os dois
+serviços novos, e o histórico vem de `useMyRegistrations`; voltar atrás é reescrever as três leituras com
+`useState` e deixar a 0016 e suas políticas sem uso. Nas duas telas do M3c a reversão já não
+é uma linha de import: `/app/igreja` consome `churchProfileService` (tabela `churches`, 0001, política
+`churches_update` da 0002 por `church.manage`, com a guarda de `approval_status` da 0004) e `/app/perfil`
+consome `myProfileService` (`profiles`, 0001, `profiles_self_update` da 0002 só para a própria conta), e
+os cadastros fictícios que as duas exibiam saíram do mock junto com o CNPJ e o "Responsável" de enfeite —
+voltar atrás é recriar fixture e deixar serviço e políticas sem uso. Não há mais caminho para
+"desligar" as leituras reais do painel ou do mapa: `pendingWiring` e `countEvents` saíram do código no
+M1, e sem as duas chaves o app nem sobe.
 
 Reversão, se você preferir o caminho mais aberto: `drop view public.church_roster;` + criar uma
 política de `profiles` por colega de igreja — e, para o cadastro, `drop trigger
@@ -436,9 +524,9 @@ leitura); J2 suspender tira do público sem cegar a própria igreja; J3 rejeitar
 avesso — `email`/`zip`/`website` seguem acessíveis a quem conseguir fazer SQL, porque a proteção de
 coluna é a projeção do app, congelada nos testes unitários.
 
-Em modo demo não há banco, então o serviço espelha as duas guardas: recusa quem não é `superadmin`
-com a mesma mensagem do `42501`, e `demoDirectoryChurches()` lê o mesmo array, então aprovar na tela
-de gestão aparece no diretório público.
+O espelho de teste tem as duas guardas: `demoSetApproval()` recusa quem não é `superadmin` com a mesma
+mensagem do `42501`, e `demoDirectoryChurches()` lê o mesmo array — é assim que a suíte prova que aprovar
+na tela de gestão aparece no diretório público, sem escrever no banco.
 
 Reversão: apague `churchApprovalService.ts`, `useChurchApproval.ts`, `ApprovalActions.tsx` e
 `approvalMap.ts`, e devolva `NOT_WIRED` aos botões de `AdminChurchesPage`/`AdminDashboardPage` (o
@@ -461,7 +549,8 @@ de `OLD`/`NEW`, sob o lock da alteração. Isso também cobre updates diretos pe
 mesmo status ou mudar só o nome não cria trilha de aprovação.
 
 Os verbos são `igreja.aprovada`, `igreja.reativada`, `igreja.suspensa`, `igreja.rejeitada`,
-`igreja.em_analise` e `igreja.pendente`. `auditService` cuida da leitura e dos verbos do espelho demo.
+`igreja.em_analise` e `igreja.pendente`. `auditService` cuida da leitura; a trilha da suíte vem de
+`demoSetApproval()` em `tests/fixtures/churchMirror.ts`.
 `/admin/auditoria` lista os registros mais recentes primeiro, com os embeds `profiles(email)` e
 `churches(name)`. Campo ausente permanece `—`; erro de consulta não vira lista fictícia. Há estados
 de carregamento, erro, vazio e atualização. A conta e o papel fazem parte da chave da leitura.
@@ -479,10 +568,11 @@ de carregamento, erro, vazio e atualização. A conta e o papel fazem parte da c
   plausível em nome próprio e insert logo após um update legítimo, na mesma transação. Quem executa
   SQL direto (SQL Editor, dono do banco, `service_role`) continua fora do alcance da RLS e pode
   ligar a marca; isso não é fechável por política. Trilhas forjadas antes da 0010 não são corrigidas.
-- O demo prepara a trilha e só altera a igreja após adicioná-la, sem `await` entre essas operações;
-  falha de preparação não muda a igreja. Tudo fica em memória e reload restaura os exemplos.
-- Implementação e execução **somente locais**. Ainda não há projeto Supabase para validar o
-  caminho completo no provedor; nenhuma migração foi aplicada remotamente e nada foi publicado.
+- O fixture de teste prepara a trilha e só altera a igreja após adicioná-la, sem `await` entre essas
+  operações; falha de preparação não muda a igreja. No aplicativo nada disso é em memória — quem escreve
+  a trilha é o trigger, na mesma transação do update.
+- Registrado neste passo como **somente local**: ainda não havia projeto Supabase remoto. Há — as
+  0009 e 0010 estão aplicadas no projeto que está no ar (ver "Estado do banco").
 
 Verificação local: **97 testes unitários**, incluindo 46 da trilha (demo, cliente Supabase simulado
 e o anti-deriva da marca entre 0009 e 0010), e **74 casos de isolamento** no Postgres embarcado. K mede trilha automática, embeds,
@@ -881,7 +971,8 @@ aplicado: a 0014 roda no Postgres embarcado (`npm run test:rls`, 17 declaraçõe
 - O trigger `enforce_campaign_publish` (INVOKER, `search_path` fixo) que **só deixa `service_role`**
   marcar `status = 'published'` ou `'failed'`. Pelo `authenticated` a transição é recusada com `42501`
   e uma mensagem própria (caso P7): nenhuma campanha nasce "publicada" sem confirmação real do provedor.
-- CHECK de contenção em `networks` (só instagram/facebook/tiktok/whatsapp) e em `status` (draft/
+- CHECK de contenção em `networks` (só instagram/facebook/tiktok/whatsapp **na 0014** — a 0020 recria o
+  CHECK sem o tiktok, no passo M3b) e em `status` (draft/
   scheduled/published/failed/cancelled). `event_id` é `on delete set null`; `church_id`, `on delete cascade`.
 - **Não há política de delete** e o grant de `authenticated` não inclui delete, como em `church_branches`
   (0013). Campanha é **cancelada** (`status = 'cancelled'`), não apagada (caso P8).
@@ -957,8 +1048,8 @@ completa voltou a 342/342 unitários e 827/827 declarações.
   não tem clipboard nem Web Share, a tela diz isso e sobra o caminho manual — nunca finge sucesso.
 - O link de distribuição só existe para evento **publicado e público**; caso contrário a tela explica por
   quê em vez de gerar um link morto.
-- Implementação e execução **somente locais**: a 0014 não foi aplicada em projeto remoto. Aplique-a antes
-  de usar este frontend em um projeto real, junto com 0011, 0012 e 0013.
+- Registrado neste passo como **somente local**: a 0014 ainda não estava em projeto remoto. Ela foi
+  aplicada depois, junto com 0001–0013 e o `seed.sql`, no projeto que está no ar (ver "Estado do banco").
 
 Verificação local: **342 testes unitários** (40 de campanhas, 16 de distribuição sem chave) e **827
 declarações** de isolamento no Postgres embarcado com a 0014 aplicada (17 declarações), tudo verde.
@@ -986,6 +1077,9 @@ No navegador local (modo demo, `npm run dev`), o texto do DOM confirmou:
   Posting, WhatsApp Cloud). O banner "Nenhuma rede está conectada" explica que publicar exige OAuth +
   backend com tokens e que **não há botão de "conectar" de mentira**; sobra o cartão "Distribuição sem
   chave" apontando para a Central. Nenhum botão Conectar/Renovar/Desconectar existe no DOM. Console sem erros.
+  *(Medição da Fase 5, superada no M3b: a tela passou a ler e escrever `church_social_accounts`, o TikTok
+  saiu das duas superfícies e o "Não conectado" virou selo que só aparece quando o banco diz o contrário —
+  ver [M3b](#m3b--perfis-de-rede-escrevendo-o-banco-e-o-tiktok-fora).)*
 - **`/eventos/:slug`** (página pública, verificado antes) — "Divulgar este evento" com WhatsApp / Copiar /
   Compartilhar e o link UTM correto; o WhatsApp da igreja organizadora segue separado.
 
@@ -1222,7 +1316,7 @@ ficam "não conectado" (exigem backend e provedores externos).
   os botões mortos (Activity/Ban/Reativar).
 - **Integrações**: 5 provedores (OpenAI, Meta, TikTok, WhatsApp Business, Google Maps), cada um
   "Não conectado" + "Para conectar: {requisito}". Removidos status/chamadas/logs fingidos e o
-  botão morto "Ver logs".
+  botão morto "Ver logs". *(No M3b o TikTok saiu também daqui: são **4** provedores listados.)*
 - **Organizações** e **Suporte**: `EmptyState` honesto ("Redes de igrejas ainda não existem",
   "Suporte ainda não existe") — não há tabela, e agrupar igrejas ou abrir chamados exigiria
   migração nova. Removidos os arrays fake e os botões mortos.
@@ -1363,13 +1457,19 @@ suíte falha.
 
 Ordem para ir ao ar (o passo 1 é seu — criar o projeto Supabase e colar as chaves):
 
-1. Criar o projeto no [supabase.com](https://supabase.com), aplicar `supabase/migrations/*` (0001–0014),
+1. Criar o projeto no [supabase.com](https://supabase.com), aplicar `supabase/migrations/*` (0001–0021),
    **rodar `supabase/seed.sql`** (obrigatório — sem ele toda escrita gateada por permissão falha com
    `42501`; ver [Seed obrigatório](#seed-obrigatório-papéis-permissões-e-matriz-rbac))
    e colar `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` (a **anon pública**) no `.env.local`. A
    `service_role` **nunca** vai ao frontend nem ao Vercel. Rode `npm run test:rls` contra o projeto
    real antes de qualquer deploy (ver seção de RLS). **Feito**: projeto `dlucvyjxidrfyjwuouvp`,
    migrações 0001–0014 aplicadas e seed aplicado em 2026-11-13 (11 permissões / 6 papéis / 33 pares).
+   **0015..0021 ainda não foram aplicadas lá** — é o passo M7; sem elas as telas novas (ministérios,
+   perfis de rede, favoritos, organizações, suporte, alertas) falham com `42P01` no ar. A 0020 tem
+   ordem, e ela já está do lado certo: o app não oferece mais TikTok em campanha nem em perfil
+   (passo M3b), então a migração sobe **no mesmo deploy** que tira a opção da tela — nunca antes, para
+   uma linha já salva com a rede antiga não voltar a salvar, nunca depois, para a tela não oferecer o
+   que o banco recusa.
 2. `npm run build` gera `dist/` (estáticos já incluídos). Confira o build com `npm run preview`.
 3. Se um dia existir domínio próprio, trocar o endereço nos quatro lugares acima (ou definir
    `VITE_SITE_URL` no build **e** trocar os três estáticos) — canonical, OG e sitemap precisam
@@ -1415,9 +1515,9 @@ decidem "tem igreja?" consultam a **lista de vínculos**, não só `session.chur
   um link que o guarda de permissão barraria;
 - `/app` usa o vínculo como desempate para mostrar o nome e o status da igreja pendente.
 
-No modo demo, `demoBackend.restore()` passou a recalcular papel e igreja a partir da loja
-(`members`), espelhando o `loadSession` real que lê do banco. Sem isso, quem criava a igreja continuava
-"sem igreja" até sair e entrar de novo. SuperAdmin continua sem igreja, como no backend real.
+O recálculo de papel e igreja a partir dos vínculos está no `loadSession` do `supabaseBackend` (era
+também no `demoBackend.restore()`, até o passo M1 tirar o modo demo do aplicativo). Sem isso, quem
+criava a igreja continuava "sem igreja" até sair e entrar de novo. SuperAdmin continua sem igreja.
 
 ### Testes e prova por mutação
 
@@ -1436,24 +1536,31 @@ Mutações aplicadas e revertidas — todas pegas:
 | `refresh()` do demo virando no-op | 1 (visitante não virava administrador) |
 | tirar o ramo de SuperAdmin do `refresh()` | 1 (superadmin ganhava igreja) |
 
-**Aviso que vale para qualquer teste novo:** o `.env.local` também é carregado no modo de teste, então
-o client real existe e um teste de escrita demo falaria com o banco que está no ar. Todo teste que
-exercita a loja demo precisa de `vi.mock('@/services/supabase/client', () => ({ supabase: null }))` —
-convenção que `admin`/`branches`/`events`/`marketing`/`registrations`/`auditTrail` já seguiam e que
-faltava em `churchApproval.test.ts` e `memberWrites.test.ts` (corrigido aqui; eles só passaram a falhar
-quando as chaves reais entraram no `.env.local`).
+**Convenção que vale para qualquer teste novo:** o `.env.local` também é carregado no modo de teste,
+então um arquivo que esquecesse de simular o client escreveria no banco que está no ar. Desde o M1 a
+rede é global: `tests/setup.ts` registra um `vi.mock('@/services/supabase/client')` com um `Proxy` que
+estoura no primeiro acesso (`TESTE-SEM-MOCK: acesso ao Supabase real bloqueado pela suíte`). O teste que
+precisa do client registra o próprio `vi.mock` no topo do arquivo — o mock do arquivo tem precedência
+sobre o global — e injeta o `from` por um objeto `vi.hoisted`:
 
-### Rodar em modo demo com as chaves reais presentes
-
-```bash
-npm run dev -- --mode demo   # com um .env.demo.local local (ignorado por *.local)
+```ts
+const backend = vi.hoisted(() => ({ supabase: null as { from: typeof from } | null }))
+vi.mock('@/services/supabase/client', () => backend)
+beforeEach(() => { backend.supabase = { from } })
 ```
 
-`.env.demo.local` só precisa de `VITE_SUPABASE_URL=` e `VITE_SUPABASE_ANON_KEY=` vazios: o modo
-`demo` carrega depois do `.env.local` e o `client.ts` devolve `null`. É como a verificação abaixo foi
-feita, sem tocar no banco que está no ar.
+As escritas nos fixtures (`tests/fixtures/*Mirror.ts`) são chamadas sem `await`: a loja de teste é
+síncrona, e um `await` ali só esconderia que nada foi consultado.
 
-### Verificação no browser (modo demo, 2026-11-12)
+### Rodar sem tocar no banco que está no ar
+
+Não há mais como: o modo demo foi apagado do aplicativo no M1. As duas chaves públicas são obrigatórias
+no ambiente de build — sem elas o `client.ts` lança antes do `createClient` e o app não sobe. A
+alternativa ao banco real são os fixtures (`tests/fixtures/`), que espelham as regras do serviço em
+memória e só existem na suíte de testes; nenhuma página do aplicativo serve dados mockados, e a cerca em
+`tests/unit/schemaSecurity.test.ts` falha se um ramo demo ressuscitar.
+
+### Verificação no browser (2026-11-12, ainda em modo demo — registro anterior ao M1)
 
 - `visitante@email.com` → `/app`: cartão "Sua conta ainda não tem igreja" + botão **Cadastrar igreja**;
 - `/app/onboarding`: formulário com as 27 UFs, nome obrigatório (mín. 3) → envio → cartão verde
@@ -1689,9 +1796,355 @@ continuou **Lista de espera**; rearmado, o clique em confirmar passou a linha pa
 Console limpo. O `/app/checkin` não foi medido ao vivo aqui porque as inscrições mockadas não têm
 `ticket_code` nenhum — a tela de código está coberta pelos testes de fonte acima.
 
+## Rodada M — o banco que faltava (0015..0021) e as telas sem mock
+
+### M2 — o que não existia passa a existir (0015..0020)
+
+Nenhuma tela mudou neste passo: ele só deu origem real ao que cinco telas ainda inventavam, para o M3
+ler do banco sem inventar regra no frontend.
+
+| Migração | O que cria | Audiência |
+|---|---|---|
+| 0015 | `ministries`, `ministry_members`, `church_social_accounts` + a view `ministry_list` | lê membro ativo (ou SuperAdmin); escreve `members.manage` em ministério e `church.manage` em perfil de rede. **Nenhuma permissão nova** — o `seed.sql` já aplicado no projeto real continua valendo |
+| 0016 | `visitor_favorites`, `visitor_preferences` | `user_id = auth.uid()` em toda operação, `WITH CHECK` incluso; `anon` sem grant nenhum — sem conta, sem favorito |
+| 0017 | `church_networks`, `church_network_churches` + view `church_network_list` | escrita só do SuperAdmin; o membro vê apenas as redes das próprias igrejas, pelo `current_network_ids()` (`security definer`, para a política não ler a tabela de associação sob RLS) |
+| 0018 | `support_tickets`, `support_messages` + view `support_ticket_list` | quem abriu, quem **gerencia** a igreja assunto e SuperAdmin — as três regras numa função só (`can_read_ticket`) porque `support_messages` não pode consultar `support_tickets` dentro da própria política. Sem delete: suporte é trilha |
+| 0019 | `security_events` + RPC `log_security_event` + views de resumo | ninguém escreve pela API, nem SuperAdmin: `revoke all` e o insert só acontece dentro da função `security definer`, que grava `actor_id = auth.uid()` e aceita dois tipos (`permission_denied`, `publish_denied`). Tabela separada de `audit_logs` de propósito — uma RPC que ligasse a marca da 0010 reabriria o buraco que a 0010 fechou |
+| 0020 | troca do CHECK de `marketing_campaigns.networks` | TikTok fora das redes de campanha; nenhuma linha é reescrita e a 0015 já não aceitava `tiktok` no CHECK de `church_social_accounts` — as duas superfícies concordam |
+
+A 0015 também é onde `connected` deixa de ser campo editável: o trigger `enforce_social_connection`
+recusa com `42501` qualquer `authenticated` que marque a conta como conectada (inclusive nascendo
+conectada), pelo mesmo motivo do `enforce_campaign_publish` (0014). A tela grava o @handle — que o
+administrador sabe — e o selo continua "não conectado" enquanto nenhum provedor confirmar.
+
+**Delete de ministério existe**, ao contrário de campanha e filial: desfazer um ministério montado por
+engano é operação normal, e `ministry_members` cai por cascata.
+
+Suíte SQL: **grupos Q..U** (ministérios e perfis de rede social, favoritos, redes de igrejas, suporte,
+eventos de segurança); a 0020 é provada no P9 e nos CHECKs de Q8/R5.
+
+### M3a-0 — 0021: líder e participante de ministério têm de ser da igreja
+
+**Revisão de risco.** A 0015 amarrava `ministries.leader_id` e `ministry_members.user_id` em `profiles`
+sem conferir **de que igreja** é a pessoa. Falta de coerência seria ruim; aqui é de audiência:
+
+| # | Risco | O que a guarda faz |
+|---|---|---|
+| 1 | `ministry_list` é `security_invoker = false` (mesma razão do `church_roster`), então o `left join profiles l` que forma `leader_name` **não passa pela RLS de `profiles`** — que pela 0002 só deixa cada um ler a si mesmo | a guarda fecha a **escrita**, não a leitura: `leader_id` passa a ser obrigatoriamente membro **ativo** da igreja do ministério — exatamente o conjunto que a própria view já mostraria àquela igreja. Nada é ampliado |
+| 2 | Quem tem `members.manage` podia gravar qualquer uuid em `leader_id` e receber o `full_name` daquela pessoa na tela: oráculo "uuid → nome" sobre outras igrejas e sobre qualquer conta da plataforma | `enforce_ministry_leader()`, `BEFORE INSERT OR UPDATE OF church_id, leader_id`, recusa com `42501`; uuid que nem é perfil responde `23503` |
+| 3 | O mesmo oráculo pelo caminho de participante — dar de fora como inscrito no ministério | `enforce_ministry_member()`, `BEFORE INSERT`, com as duas mensagens e a mesma régua de vínculo ativo (a tabela não tem update, então não há `UPDATE OF` aqui) |
+| 4 | A guarda virar bloqueio geral: recusar tudo é tão inútil quanto recusar nada | Q9b escreve líder e participante **corretos** e exige que entrem — sonda anti-no-op |
+| 5 | Perder a proteção por deriva estrutural (trigger trocado, `search_path` solto, grant recuperado) | Q9c lê `pg_trigger`/`pg_proc`: os dois existem, são `BEFORE` de linha, o do líder vigia `church_id,leader_id`, o do participante é só `INSERT`; as duas funções são `DEFINER` com `search_path` fixo e sem `EXECUTE` para `anon`/`authenticated` |
+
+O padrão é o da casa (`enforce_event_branch`, 0013): `plpgsql` + `security definer` +
+`set search_path = public` + `raise exception ... using errcode = '42501'` + `revoke execute`.
+
+**Prova por mutação** — cada mutação aplicada na 0021, a suíte inteira rodando, arquivo restaurado no
+`finally`. 10 de 10 pegues; na coluna, a mensagem que o Postgres estourou:
+
+| Mutação | Pegou em |
+|---|---|
+| M1 — líder deixa passar quem não é da igreja | `Q9: leader de outra igreja aceito no update` |
+| M2 — líder confere a igreja da sessão, não a do ministério | `Q9: leader de outra igreja aceito no update` |
+| M3 — líder aceita vínculo `invited` | `Q9: leader invited aceito na propria igreja` |
+| M4 — participante deixa passar quem não é da igreja | `Q9: participante de outra igreja aceito` |
+| M5 — participante confere a igreja errada | `Q9: participante de outra igreja aceito` |
+| M6 — participante aceita vínculo `invited` | `Q9: participante invited aceito no ministerio da A` |
+| M7 — trigger do líder passa a vigiar só `leader_id` | `Q9c: o trigger de lider vigia leader_id — esperava church_id,leader_id` |
+| M8 — trigger do participante removido | `Q9: participante de outra igreja aceito` |
+| M9 — `revoke execute` das duas funções removido | `Q9c: anon/authenticated recuperou EXECUTE nas funcoes da 0021` |
+| M10 — função do líder sem `set search_path` | `E3: funcao SECURITY DEFINER sem search_path fixo: enforce_ministry_leader` |
+
+M10 não é pega pelo grupo Q — quem derruba é o **varredor estrutural E3** (função `SECURITY DEFINER`
+sem `search_path` fixo, em qualquer migração), que é justamente o objetivo da cerca global.
+
+Os casos `invited` (M3/M6) existem porque a convidada A tem papel de `manager` na igreja A: conferir só
+a **existência** do vínculo deixaria passar quem ainda não aceitou o convite — a mesma régua do caso O3
+de filiais.
+
+### M3a — ministérios lendo e escrevendo o banco
+
+`/app/ministerios` saiu de `@/data/mock`. As peças:
+
+- [src/services/data/ministryService.ts](src/services/data/ministryService.ts) — `MINISTRY_COLUMNS` é a
+  projeção da view `ministry_list`, comparada coluna a coluna com o texto da própria view em
+  `tests/unit/ministries.test.ts` (contrato estrutural, não número). Leituras: `fetchMinistries`
+  (membro com `.eq('church_id')`, SuperAdmin sem recorte, sem igreja na sessão **não sai consulta**) e
+  `fetchMinistryMembers`. Escritas: `createMinistry` / `updateMinistry` / `deleteMinistry` /
+  `addMinistryMember` / `removeMinistryMember`, todas gateadas por `can(role, 'members.manage')`
+  **antes** de consultar — primeira camada; as políticas `ministries_write`/`_update`/`_delete` são a
+  segunda.
+- Escrita devolve o que o banco confirmou: `insert`/`update` na tabela + `.select('id').maybeSingle()`
+  e **releitura pela view**, porque `leader_name` e `members_count` não existem na tabela — é o mesmo
+  formato do conserto do insert de igreja (2026-11-13). Linha que não volta é "não encontrado ou sem
+  permissão", nunca sucesso fingido: sem oráculo de existência.
+- Erro do banco vira texto legível: `42501` → sem permissão; `23503` → "a pessoa indicada não é uma
+  conta desta plataforma" (é o que a 0021 responde quando o uuid nem é perfil); `23514` → nome/tipo
+  fora do permitido; `23505` em participante → "essa pessoa já participa do ministério".
+- [src/hooks/useMinistries.ts](src/hooks/useMinistries.ts) e a tela: formulário oferece como líder
+  **só gente do roster ativo** da igreja (a 0021 recusaria uuid digitado), a equipe do ministério é
+  `ministry_members` real, e apagar pede confirmação armada na linha.
+- [tests/fixtures/ministryMirror.ts](tests/fixtures/ministryMirror.ts) — o espelho que era demo:
+  `project()` deriva `leader_name` de `profiles` e `members_count` de `ministry_members` (a contagem
+  nunca é campo digitado), `guardPerson()` reproduz a 0021 na ordem das mensagens (referência antes de
+  audiência) e `canReach()` a política de leitura. Os líderes do mock (`m1..m5`) foram ajustados para
+  vínculos **ativos** da própria igreja: se o fixture espelha a 0021, líder `invited` no mock derrubaria
+  o próprio espelho.
+
+Medido: **512 testes unitários** (39 de ministérios), `tsc -b` limpo, lint sem erros, build de produção
+ok, suíte de RLS **1035 declarações, grupos A–U, PASSOU**. O bundle não carrega mais os ministérios
+fictícios — sobrou só o placeholder "Ex.: Ministério de Louvor" do formulário. A cerca de allowlist em
+`tests/unit/schemaSecurity.test.ts` encolheu de 4 para 3 páginas e foi mutacionada: devolver uma tela ao
+mock quebra o teste.
+
+**Limites desta entrega.** As migrações 0015..0021 **ainda não foram aplicadas** no projeto real
+(`dlucvyjxidrfyjwuouvp`) — enquanto isso, `/app/ministerios` no ar cai na mensagem de falha de leitura
+da tela (o banco responde `42P01`), e a tela nova não foi medida no browser: nada foi escrito no banco
+que está no ar. Aplicar 0015..0021 + rodar a suíte no projeto real é o passo M7.
+
+### M3b — perfis de rede escrevendo o banco, e o TikTok fora
+
+`/app/redes` saiu de `@/data/mock` e passou a ler/escrever `church_social_accounts` (0015). As peças:
+
+- [src/services/data/socialAccountService.ts](src/services/data/socialAccountService.ts) —
+  `SOCIAL_COLUMNS` é a projeção da tabela, comparada coluna a coluna com o texto da migração;
+  `SOCIAL_INSERT_COLUMNS = ['church_id','network','handle']` é o recorte do insert. Leituras:
+  `fetchSocialAccounts` (membro com `.eq('church_id')`, SuperAdmin sem recorte, sem igreja na sessão
+  **não sai consulta**). Escritas: `createSocialAccount` / `updateSocialHandle` / `deleteSocialAccount`,
+  todas gateadas por `can(role, 'church.manage')` **antes** de consultar.
+- [src/hooks/useSocialAccounts.ts](src/hooks/useSocialAccounts.ts) e a tela reescrita: uma linha por
+  rede (Instagram, Facebook, WhatsApp, YouTube), @handle editável no lugar, apagar com confirmação
+  armada, e o selo "Conectada" que **só aparece** se o banco devolver `connected = true`.
+- [tests/fixtures/socialMirror.ts](tests/fixtures/socialMirror.ts) — o espelho que era demo: vínculo
+  ativo (`current_church_ids`, convidada não lê), índice único `(church_id, network, lower(handle))`
+  respondendo `23505`, `canReach()` para a linha fora do alcance e `demoSetSocialConnected` /
+  `demoInsertConnected` reproduzindo o trigger nos dois sentidos.
+- TikTok varrido do aplicativo: `SOCIAL_NETWORKS` nunca o teve (o CHECK da 0015 já não aceitava) e
+  `CAMPAIGN_NETWORKS` perdeu a opção (0020 troca o CHECK de `marketing_campaigns.networks`). Saiu
+  também do formulário de campanha, do perfil da igreja, das telas de Integrações/Monitoramento/Logs do
+  SuperAdmin e da promessa comercial da home.
+
+**Revisão de risco.** Mexer nesta tela mexe em quem escreve a identidade pública da igreja:
+
+| # | Risco | O que fecha isso |
+|---|---|---|
+| 1 | A tela poder **fingir conexão** — um `connected: true` no payload (ou num default de insert) faria o app afirmar ao administrador que o perfil está ligado ao provedor, que é exatamente o que a 0015 proíbe | o payload é literal: insert só manda `church_id/network/handle`, update só manda `handle`. `SOCIAL_INSERT_COLUMNS` não lista a coluna, `tests/unit/socialAccounts.test.ts` compara **as chaves exatas** do que saiu, e o trigger `enforce_social_connection` (42501, inclusive para linha nascendo conectada) é a 2ª camada para qualquer escrevente — inclusive este app |
+| 2 | Quem **entra** na rota não é quem **escreve**: `/app/redes` é guardada por `marketing.manage` (superadmin, church_admin, gerente, comunicador), mas a escrita da 0015 é `church.manage` (superadmin e church_admin) | o gate é `can(role,'church.manage')`, antes de consultar; gerente e comunicador veem a tela em **modo leitura-ativada** com o motivo na tela, sem botão de gravar. O teste afirma os dois `can(...)` para a fronteira não derivar sozinha |
+| 3 | Unificar as redes em um tipo só — o caminho óbvio, e o que gerou o defeito que estamos tirando | são **dois conjuntos porque o banco tem dois CHECKs**: perfil = 4 redes com `youtube` (0015), campanha = 3 sem `tiktok` (0014+0020). Cada lista é comparada ao texto do CHECK correspondente, e um teste separado afirma que `tiktok` não está em nenhum e `youtube` só no perfil |
+| 4 | Vazar @handle de outra igreja, ou servir de **oráculo de existência** ("essa linha não existe" vs "você não pode") | leitura sempre com `.eq('church_id')` (sem recorte só SuperAdmin), escrita por id com a linha relida pelo mesmo recorte, e uma mensagem só — `SOCIAL_NOT_FOUND` — tanto para linha inexistente quanto para linha fora do alcance, no serviço real e no espelho |
+
+**Prova por mutação** — 10 de 10 mortas (arquivo corrompido, suíte rodando, restaurado no `finally`;
+nenhum `git checkout`, porque havia trabalho não commitado na faixa):
+
+| Mutação | Pegou em |
+|---|---|
+| M1 — `connected` de volta no payload do insert | `nem o insert nem o update levam a coluna em nenhum payload` + `a criação manda o recorte da sessão e devolve a linha confirmada` |
+| M2 — `connected` de volta no payload do update | as mesmas duas |
+| M3 — gate `church.manage` removido do serviço | `quem entra na rota mas não gerencia a igreja não escreve, e nenhuma consulta sai` + `a porta vem antes da validação: papel errado recebe a mensagem de permissão` |
+| M4 — `.eq('church_id')` a menos na leitura | `membro pede a tabela, a projeção, a ordem e o recorte por igreja` |
+| M5 — espelho deixando o app marcar como conectada | `o espelho recusa conectar e desconectar pelo app, e aceita pelo backend` |
+| M6 — `tiktok` de volta em `CAMPAIGN_NETWORKS` | marketing `recusa rede fora do conjunto suportado` + `CAMPAIGN_NETWORKS é exatamente o CHECK recriado pela 0020` + `tiktok saiu do app inteiro...` |
+| M7 — `tiktok` de volta em `SOCIAL_NETWORKS` | `SOCIAL_NETWORKS é exatamente o CHECK de church_social_accounts.network` + `rede fora do CHECK do banco é recusada antes de consultar` |
+| M8 — `canReach()` do espelho sempre `true` | `perfil da igreja vizinha dá a mesma mensagem de não-existente` |
+| M9 — `church_id` enviado no patch de edição | `nem o insert nem o update levam a coluna em nenhum payload` + `a edição só manda o handle e aponta para a linha pelo id` |
+| M10 — `/app/redes` voltando a importar `@/data/mock` | `as únicas páginas que ainda leem a loja de mocks são as que faltam no M3` |
+
+M10 é a cerca estrutural de `tests/unit/schemaSecurity.test.ts`: a allowlist encolheu de **3 para 2**
+páginas e continua sendo uma lista que só diminui.
+
+Medido: **548 testes unitários** em 22 arquivos (36 de perfis de rede), `tsc -b` limpo, lint sem erros,
+build de produção ok e o bundle **sem** `TikTok`, sem a string `tiktok` e sem o ícone da rede. A suíte de
+RLS local rodou com a 0020 aplicada: **1035 declarações, grupos A–U, PASSOU** (a 0020 entra como 2
+declarações; P9 e os CHECKs de Q8/R5 provam o novo conjunto de redes).
+
+**Limites desta entrega.** Vale o mesmo do M3a: as 0015..0021 ainda não estão no projeto real, então
+no ar `/app/redes` cai na mensagem de falha de leitura (`42P01`) — a tela nova não foi medida no browser
+e nada foi escrito no banco que está no ar. A 0020 sobe **junto** deste deploy (M7), para a tela nunca
+oferecer uma rede que o banco recusa. E o @handle continua sendo o que o administrador digitou: "o que
+cada rede realmente é" só passa a ter valor quando um backend com OAuth confirmar (M5/integrações).
+
+### M3c — cadastro institucional e perfil pessoal salvando de verdade
+
+`/app/igreja` e `/app/perfil` saíram de `@/data/mock`. **Nenhuma migração nova**: as tabelas
+(`churches`/`profiles`, 0001), as políticas de escrita (`churches_update` e `profiles_self_update`, 0002)
+e a guarda de `approval_status` (0004) já existiam — o que faltava era o aplicativo usá-las. As peças:
+
+- [src/services/data/churchProfileService.ts](src/services/data/churchProfileService.ts) — três listas
+  que se costuram sozinhas: `CHURCH_PROFILE_COLUMNS` (18, o que a tela lê), `CHURCH_EDITABLE_COLUMNS`
+  (13, o que o formulário pode mandar) e `CHURCH_LOCKED_COLUMNS` (`id`, `slug`, `status`,
+  `approval_status`, `created_by`, `created_at`, `updated_at`). `fetchChurchProfile` com `.eq('id')`;
+  `updateChurchProfile(draft, actor)` gateado por `can(role, 'church.manage')` **antes** de consultar;
+  `buildChurchPatch` literal coluna por coluna (nunca `...draft`); `parseCoordinate` aceitando vírgula
+  brasileira; texto em branco virando `null`, para "limpar" funcionar de verdade.
+- [src/services/data/myProfileService.ts](src/services/data/myProfileService.ts) —
+  `MY_PROFILE_EDITABLE_COLUMNS = ['full_name','phone']`; `email`, `id` e `avatar_url` estão na lista de
+  travadas, e o update vai por `.eq('id', actor.userId)`. Aqui **não há exceção de SuperAdmin**: a
+  política é só a própria conta, e o espelho/`it.each` não deixam inventar uma.
+- [src/hooks/useChurchProfile.ts](src/hooks/useChurchProfile.ts) e as duas telas reescritas:
+  [src/pages/church/ChurchProfilePage.tsx](src/pages/church/ChurchProfilePage.tsx) em três cards
+  (básicas / contato / endereço+coordenadas), com "Nada para salvar: os campos estão iguais ao que o
+  banco tem.", barra Salvar/Descartar, card "Situação" **somente leitura** (aprovação, status e `slug`
+  são do SuperAdmin) e link para `/app/redes`;
+  [src/pages/church/UserProfilePage.tsx](src/pages/church/UserProfilePage.tsx) gravando nome e telefone,
+  e-mail de login `readOnly` com o motivo, troca de senha real pelo `AuthContext`, MFA intacto e os três
+  botões sem backend (sessões ativas, exportar, excluir) desabilitados **com o que faltaria** no título.
+- O que saiu da tela: o CNPJ inventado, o "Responsável: Pr. Marcos Lima" e os campos mortos de
+  Instagram/Facebook/YouTube — rede social tem tabela (`church_social_accounts`, 0015) e se edita em
+  `/app/redes`; campo que não grava em lugar nenhum é o que não se mostra. O botão de upload de capa que
+  não enviava arquivo algum também saiu.
+- [src/utils/ufs.ts](src/utils/ufs.ts) (`UF_LIST`) virou a única fonte do seletor de estado, agora
+  usado pela tela de igreja e pelo onboarding; e `AuthContext.refresh()` relê a sessão depois de gravar
+  em `profiles`, porque `onAuthStateChange` **não** dispara em update de coluna — sem isto o nome novo
+  só aparecia depois de sair e voltar.
+
+**Revisão de risco.** Mexer aqui é mexer na identidade pública da igreja e no que uma pessoa afirma ser.
+
+| # | Risco | O que fecha isso |
+|---|---|---|
+| 1 | A tela afirmar algo que o banco não gravou — um `...draft` no update, ou um "salvo" quando o `update` não devolve linha | patch literal e `.update(patch).eq(...).select(COLUMNS).maybeSingle()`: linha que não volta é `*_NOT_FOUND`, nunca sucesso. `tests/unit/profiles.test.ts` compara **as chaves exatas** do patch com a lista e afirma que nenhuma coluna travada entra, nem com valor válido |
+| 2 | `slug`, `status` e `approval_status` — endereço público, ativação e aprovação — mudarem pelas mãos de um `church_admin` | **a RLS é por linha, não por coluna**: `churches_update` (0002) deixa qualquer coluna para quem tem `church.manage`. `approval_status` tem guarda no banco (0004, `42501`, conferida no texto da migração); `slug` e `status` **não têm** — a fronteira deles é o patch do app mais as três listas, e C18 confere que o update da tela não os mudou. Guarda de coluna no banco = migration 0022, **não feita** (veja Limites) |
+| 3 | O perfil pessoal virar porta para trocar o e-mail de login, que é a identidade da conta no Auth | `email` está fora das editáveis, fora do patch, e na tela é `readOnly` com a frase de que trocar o login exige confirmar a posse do novo endereço — é fluxo próprio, não campo de formulário |
+| 4 | Escrita cruzada: um `church_admin` editar a igreja vizinha, ou alguém editar o perfil de outra pessoa | leitura e escrita sempre com `.eq('id', ...)` vindo da sessão, `can(...)` antes de consultar, e **nenhuma exceção** no perfil pessoal — medido em SQL por C17/C19, com as sondas S1/S2 provando que as políticas afrouxadas derrubam os casos |
+
+**Prova por mutação** — 12 de 12 mortas (`tools/mutate-profiles.cjs`: arquivo corrompido, suíte rodando,
+restaurado no `finally`; nenhum `git checkout`, porque havia trabalho não commitado na faixa):
+
+| Mutação | Pegou em |
+|---|---|
+| M1 — `slug: 'invasao'` de volta no patch da igreja | `nenhuma coluna travada entra no payload, nem com valor válido` |
+| M2 — `status` listado como editável | `as chaves do patch são exatamente as colunas editáveis, na ordem da lista` + `editáveis + travadas cobrem a tabela inteira, menos as duas de arquivo` |
+| M3 — gate `church.manage` removido do serviço | `quem não gerencia a igreja recebe a recusa, e nada sai pela rede` + `a recusa de papel vem antes da validação: papel errado não recebe "nome curto"` |
+| M4 — `.eq('id', churchId)` a menos na escrita | `a escrita manda o patch pelo id da própria igreja e devolve a linha confirmada` |
+| M5 — guarda de "sessão sem igreja" removida | `SuperAdmin tem a porta, mas sem igreja ativa não escreve` |
+| M6 — `blankToNull` devolvendo o texto cru | `campo de texto em branco vira null: limpar funciona` |
+| M7 — erro de leitura virando `null` (tela vazia em vez de falha) | `erro na leitura não recorre a cadastro fictício` |
+| M8 — `42501` deixando vazar a mensagem do banco | `erro do banco — policy recusando — vira mensagem legível` |
+| M9 — `logo_url` de volta na projeção | `a tela não oferece logo nem capa: as duas também não estão na projeção` |
+| M10 — `email` no patch do perfil pessoal | `e-mail, id e avatar nunca saem do app` |
+| M11 — `.eq('id', actor.userId)` a menos no perfil pessoal | `pede a tabela profiles, o recorte pelo próprio id e devolve a linha confirmada` |
+| M12 — validação de nome removida | `nome vazio é recusado antes de consultar: é assim que a pessoa aparece` |
+
+Sondas no banco (`tools/mutate-rls-profiles.cjs`, `0002` restaurada no `finally`): acrescentar
+`or public.is_superadmin()` em `profiles_self_update` derruba **C19**, e trocar `church.manage` por
+`events.manage` — que o gerente **tem** — em `churches_update` derruba **C17**. As duas morreram dizendo
+o número. Os casos novos: **C17** (o gerente da igreja lê o cadastro e não altera nome, descrição nem
+endereço), **C18** (o caminho legítimo: church_admin grava as 13 colunas da tela, elas chegam ao banco, e
+`slug`/`status`/`approval_status` não se movem — anti-no-op, porque uma política que aceitasse update
+genérico não passaria por aqui) e **C19** (SuperAdmin edita o próprio perfil, não o do colega).
+
+Medido: **585 testes unitários** em 23 arquivos (37 de perfis), `tsc -b` limpo, lint sem erros, build de
+produção ok. A suíte de RLS recontada: **1052 declarações, grupos A–U, PASSOU** (+17 no grupo C). A cerca
+de allowlist em `tests/unit/schemaSecurity.test.ts` encolheu de **2 para 1** página e continua sendo uma
+lista que só diminui — sobrou `src/pages/public/VisitorProfilePage.tsx` (M3d).
+
+**Limites desta entrega.** Como em M3a/M3b, nada foi escrito no banco que está no ar: conferir a gravação
+no browser exigiria criar conta e igreja reais no projeto de produção (`dlucvyjxidrfyjwuouvp`), e os dados
+do piloto foram apagados — com as 0015..0021 ainda pendentes (M7), `/app/ministerios` e `/app/redes`
+seguem em `42P01` no ar. **Não existe guarda de coluna no banco para `slug` e `status`**: um `church_admin`
+chamando a API direta trocaria o endereço público da igreja ou a desativaria. Fechar isso é uma migração
+nova (0022, `BEFORE UPDATE` comparando as duas colunas, mesma técnica da 0004) — **não feita aqui**,
+porque apertar política de escrita de `churches` é mudança de audiência de dados e pede a sua autorização
+antes. `logo_url`/`cover_url` ficaram fora da projeção e do patch: nenhuma tela renderiza a imagem hoje e
+mandar campo vazio apagaria o valor que existe — voltam no M4 com o upload real no Storage.
+
+### M3d — favoritos, preferências e histórico do visitante salvando de verdade
+
+`/visitante/perfil` e o coração da página de evento saíram de `@/data/mock` — e com isso **nenhuma tela do
+aplicativo lê a loja de mocks**. **Nenhuma migração nova**: a 0016 (`visitor_favorites` +
+`visitor_preferences`) foi escrita no M2 e os casos SQL dela (grupo R) já rodavam no Postgres embarcado; o
+que faltava era o aplicativo usá-la. As peças:
+
+- [src/services/data/visitorFavoriteService.ts](src/services/data/visitorFavoriteService.ts) —
+  `VISITOR_FAVORITE_COLUMNS` (as três da tabela) e `VISITOR_FAVORITE_INSERT_COLUMNS` (`user_id`,
+  `event_id`). Leitura com `.eq('user_id', ...)` e `.order('created_at', { ascending: false })`, insert
+  literal, delete **pelos dois campos** — a PK é o par, não existe `id`. Não há UPDATE: o grant da 0016 é
+  `select, insert, delete` (medido em R5), então a lista muda tirando e pondo o par. `23505` é "já está nos
+  seus favoritos" (apertar duas vezes é caminho normal), `42501` é "entre na sua conta", `23503` é "o
+  evento não está mais disponível".
+- [src/services/data/visitorPreferenceService.ts](src/services/data/visitorPreferenceService.ts) —
+  `VISITOR_INTERESTS` é o mesmo array do CHECK `<@ array['jovens','familia','mulheres','homens','acao_social']`,
+  na mesma ordem, e `VISITOR_CITY_MAX = 80` é o `char_length(btrim(city)) <= 80`: os dois são comparados ao
+  texto da migração, então afrouxar a lista na tela sem mexer no banco quebra o teste. A escrita é
+  `upsert(patch, { onConflict: 'user_id' })` — a tabela tem insert **e** update e não tem delete, e um round
+  trip dispensa o "existe? então update" correndo contra si mesmo. `updated_at` não entra no patch: é
+  trigger (`trg_visitor_preferences_updated`).
+- [src/hooks/useVisitorProfile.ts](src/hooks/useVisitorProfile.ts)
+  (`useVisitorFavorites` + `useVisitorPreferences`) e `useMyRegistrations` em
+  [src/hooks/useRegistrations.ts](src/hooks/useRegistrations.ts) — os três sobre `useKeyedList` com a
+  identidade sendo o **id da sessão**: trocar de conta descarta a leitura anterior, em vez de deixar o
+  favorito de quem acabou de sair na tela de quem entrou.
+- [src/pages/public/VisitorProfilePage.tsx](src/pages/public/VisitorProfilePage.tsx) reescrita e o
+  `FavoriteButton` de [src/pages/public/EventDetailPage.tsx](src/pages/public/EventDetailPage.tsx). O que a
+  tela faz com o que volta: favorito é unido ao diretório público (`usePublicEvents`) pelo id — evento que
+  saiu do ar **some da lista** e é contado na nota, porque a 0016 não confere publicação na RLS (decisão 4,
+  escrita na migração) e a única leitura de `events` que o visitante tem é a `events_public_read`.
+  Preferências: cidade + os cinco interesses, "Nada para salvar: os campos estão iguais ao que o banco
+  tem.", e depois do salvar o que aparece nos campos é a linha que o banco devolveu, não o pedido.
+  Histórico: `event_registrations` pelo `user_id` (a `event_registrations_read` da 0012) e, como o link da
+  rota pública é `/eventos/:slug`, `toRegistration` passou a trazer também `event_slug` do embed que já era
+  pedido — linha sem embed vira texto, não link quebrado.
+- O que saiu da tela: os dois eventos fictícios listados como "favoritos", o `useState` do botão "Salvar
+  preferências" (que só acendia uma bandeirinha "salvo (demo)") e os campos de nome/e-mail/telefone —
+  identidade é `profiles` e se edita em `/app/perfil` (M3c); a 0016 guarda preferência, não cadastro.
+
+**Revisão de risco.** O dado aqui é de uma pessoa só, visto numa rota pública.
+
+| # | Risco | O que fecha isso |
+|---|---|---|
+| 1 | Favorito ou preferência de outra conta aparecer na tela | nenhuma consulta sai sem `userId`: as leituras devolvem `[]`/`null` e as escritas recusam com "entre na sua conta" **antes** de tocar no banco; o recorte `.eq('user_id', ...)` está nos três caminhos — provado por M2/M12/M13/M14, e a recusa de audiência em si é do grupo R da suíte SQL |
+| 2 | Escrever na linha alheia mandando `user_id` no corpo | `visitor_favorites_self` e as três `visitor_preferences_self_*` (0016) têm `user_id = auth.uid()` em USING **e** em WITH CHECK, e o `user_id` do patch vem da sessão: `buildVisitorPreferencePatch(draft, userId)` nem recebe id pelo formulário. O teste confere as chaves exatas do patch e do insert |
+| 3 | A tela dizer "salvo" quando o banco não gravou nada | insert/upsert com `.select(COLUMNS).maybeSingle()`: linha que não volta é recusa, nunca sucesso (M4/M6). No delete, zero linhas é a mesma frase da policy USING — "não estava na lista" — então a tela não vira oráculo de "essa linha existe" |
+| 4 | Favorito de evento fora do ar virar linha inventada | união client-side com o diretório público: o que não está no ar sai da lista e entra na contagem da nota, e a preferência não oferece interesse que o CHECK recusa |
+| 5 | A UI reintroduzir um interesse que o banco não aceita (TikTok, por exemplo) | `VISITOR_INTERESTS` comparado elemento a elemento ao array escrito na 0016 e `normalizeInterests` devolvendo na ordem do CHECK, sem repetição — M9 (injetar `tiktok` na lista) e M11 morrem aqui |
+
+**Prova por mutação** — 16 de 16 mortas (`tools/mutate-visitor.cjs`: arquivo corrompido, suíte rodando,
+restaurado no `finally` e conferido depois; nenhum `git checkout`, porque há trabalho não commitado):
+
+| Mutação | Pegou em |
+|---|---|
+| M1 — `created_at` junto no insert do favorito | `salvar insere o par literal e devolve a linha confirmada` |
+| M2 — gate de sessão fora da leitura de favoritos | `sem sessão não sai consulta nenhuma — e o retorno é lista vazia, não erro` |
+| M3 — delete só por `event_id` (a menos o `user_id`) | `remover pelo par (conta, evento): a PK composta dispensa o id` |
+| M4 — delete sem linha afirmando sucesso | `linha que não voltou no delete diz "não estava na lista", sem dizer se existe` |
+| M5 — `23505` deixando vazar a mensagem do banco | `erro do banco — par duplicado — vira mensagem legível` |
+| M6 — insert sem linha virando `{ ok: true }` | `inserir sem linha de volta não é sucesso silencioso` |
+| M7 — `updated_at` no patch da preferência | `o patch tem exatamente as três colunas do formulário — updated_at é trigger` |
+| M8 — `upsert` sem `onConflict: 'user_id'` | `a escrita é upsert pela chave da conta: um round trip, sem "existe? então update"` |
+| M9 — `tiktok` de volta na lista de interesses | `os interesses da tela são os do CHECK, na mesma ordem e sem tiktok` |
+| M10 — cidade aceita até 200 caracteres | `o limite de cidade é o do CHECK da tabela` |
+| M11 — `normalizeInterests` passando o array cru | `interesse repetido sai uma vez, na ordem do CHECK` |
+| M12 — validação da preferência removida | `cidade comprida e interesse fora do CHECK são recusados antes do banco` |
+| M13 — `42501` deixando vazar a mensagem do banco | `linha que não volta e policy que recusa dizem a mesma coisa` |
+| M14 — histórico sem `.eq('user_id', ...)` | `a leitura é recortada pelo user_id da sessão, com o embed que dá nome e slug` |
+| M15 — `event_slug` fora da projeção | o mesmo teste, pelo `toMatchObject` do embed — o link da rota pública não tem mais de onde sair |
+| M16 — `VisitorProfilePage` voltando a importar `@/data/mock` | `nenhum arquivo do aplicativo importa a loja de mocks` (a cerca de `schemaSecurity`) |
+
+M16 é a sonda da cerca: a allowlist de páginas presas no mock encolheu de 2 → 1 (M3c) → **0** (M3d) e
+virou proibição seca — importar a loja de mocks de dentro de `src/` não é mais um estado conhecido, é teste
+vermelho.
+
+Medido: **613 testes unitários** em 24 arquivos (28 em `visitorProfile.test.ts`), `tsc -b` limpo, lint sem
+erro novo (as 4 advertências são as mesmas de antes: `new Date()` no rodapé, `react-refresh` nos contexts e
+o `setTimeout` do mapa), build de produção ok. No `dist/` gerado **não há dado fictício** — os padrões da
+loja de mocks (`Camila Torres`, `Congresso de Jovens 2026`) não aparecem em nenhum dos 4 arquivos, e a
+única ocorrência de `sb_secret_` no bundle é o validador de formato do próprio `supabase-js`, não uma
+chave. Suíte de RLS recontada, sem SQL alterado: **1052 declarações, grupos A–U, PASSOU**. Browser (dev
+server, sem conta): `/visitante/perfil` mostra o card "Nada salvo ainda" com Entrar/Criar conta, as duas
+listas com a frase de quem não entrou, console limpo, e `/eventos/:slug` inexistente continua renderizando
+sem erro — que é o caminho do `FavoriteButton` para anon.
+
+**Limites desta entrega.** A **gravação** no browser não foi medida: favoritar e salvar preferência exigem
+uma conta de visitante confirmada **e** um evento publicado, e o banco que está no ar não tem nenhum — os
+dados do piloto foram apagados. É o mesmo bloqueio do M3c, com a mesma saída de antes: fixture pelo SQL
+Editor (procedimento documentado acima) + a conta, e eu conduzo a medição e depois apago. Com as
+0015..0021 ainda pendentes no projeto real (M7), `/visitante/perfil` e o coração no ar caem na falha de
+leitura (`42P01`) em vez de gravar. E `visitor_favorites` não tem como saber se o evento favorecido ainda
+está publicado — é decisão registrada na própria 0016, e o custo na tela é o que está escrito acima: o
+evento some da lista e é contado na nota, nunca inventado.
+
 ## Testes de RLS e isolamento entre igrejas
 
-**827 declarações (grupos A–P)** em `supabase/tests/database/rls_isolation.sql`, executados contra
+**1052 declarações (grupos A–U)** em `supabase/tests/database/rls_isolation.sql`, executados contra
 um Postgres 18.6 real. Rodam **agora, sem projeto Supabase e sem Docker**:
 
 ```bash
@@ -1704,7 +2157,7 @@ O que é verificado:
 |-------|---------|
 | A | visitante anônimo não vê roster, perfis, logs, config — nem igreja pendente |
 | B | membro da igreja A lê só A (igrejas, membros, perfis, auditoria, permissões); SuperAdmin lê tudo |
-| C | escrita cruzada e escalada: convite em outra igreja, renomear/alvará de terceiros, autoaprovação, forjar auditoria, editar perfil alheio, excluir membros de fora, mexer em config, **se promover SuperAdmin** e remover o SuperAdmin real |
+| C | escrita cruzada e escalada: convite em outra igreja, renomear/alvará de terceiros, autoaprovação, forjar auditoria, editar perfil alheio, excluir membros de fora, mexer em config, **se promover SuperAdmin** e remover o SuperAdmin real — e, desde o M3c, **o gerente não edita o cadastro institucional** (C17), o `church_admin` grava exatamente as colunas da tela sem tocar em `slug`/`status`/`approval_status` (C18, anti-no-op) e em `profiles` não há exceção de SuperAdmin: ele edita o próprio, não o do colega (C19) |
 | D | storage: leitura/upload por pasta da igreja (públicos x privados) |
 | E | guardas estruturais: toda tabela de `public` com RLS, nenhuma política aberta (`USING (true)` **ou sem USING**) em tabela que não seja catálogo (`roles`/`permissions`/`role_permissions`/`event_categories`), toda função `SECURITY DEFINER` de `public` com `search_path` fixo, e a porta de publicação de eventos no lugar (função **INVOKER** com `search_path` fixo + trigger `BEFORE INSERT OR UPDATE OF status`) — cada guarda tem uma **sonda** que prova que ela ainda enxerga o problema |
 | F | view `church_roster`: nomes da própria igreja visíveis, contatos só para quem tem `members.manage`, anon bloqueado, nada cruzando igrejas |
@@ -1718,6 +2171,11 @@ O que é verificado:
 | N | inscrições (0012): `anon` sem grant nenhum na tabela, membro da A lê só as inscrições da A, comunicador não lê nem faz check-in (falta `registrations.manage`), inscrição do visitante por RPC com igreja derivada e código gerado, recusas por evento fora do ar / encerrado / dados inválidos / e-mail repetido, capacidade virando lista de espera, cancelamento promovendo o mais antigo da fila, `sem_permissao` para linha alheia **e** para id inexistente (permissão antes de existência), check-in repetido e de inscrição cancelada, escrita direta recusada inclusive para `authenticated`, `church_id` forjado barrado pelo trigger com `42501`, a view de agregados medida para anon (só eventos no ar) e para membro (rascunho próprio sim, o da vizinha não), usuário logado lendo só a própria linha, e o `information_schema` provando que a view não expõe nome, e-mail, telefone nem código |
 | O | filiais e localização (0013): `church_branches` sem grant de `anon` (recusa antes da RLS, O1), membro ativo lê só as filiais da própria igreja e `invited` não lê nada (O2/O3), escrita exige `church.manage` — gerente e comunicador leem mas não inserem nem editam (O4) —, church_admin cadastra/edita e transferir a filial de igreja é recusado (O5), SuperAdmin atravessa igrejas (O6), **excluir não existe** nem para o SuperAdmin (O7), `events.branch_id` de outra igreja recusado com a mesma mensagem e SQLSTATE de filial inexistente (O8, sem oráculo), coordenada fora do intervalo barrada nas três origens e NULL aceito (O9), e guardas estruturais — trigger DEFINER com `search_path` fixo e sem EXECUTE público, ausência de delete, WITH CHECK real e as colunas que o app projeta (O10). **M11** mede a localização gravada no evento |
 | P | campanhas de divulgação (0014): `marketing_campaigns` sem grant de `anon` (recusa antes da RLS, P1), leitura e escrita exigem `marketing.manage` na igreja da campanha — pastor e visitante não leem nada e `invited` também não (P3), membro lê só as da própria igreja e nada da vizinha (P2), SuperAdmin atravessa (P6) —, insert na igreja alheia recusado (P4) e transferência de igreja barrada no update (P5), **publicar é impossível pelo app**: o trigger `enforce_campaign_publish` recusa `published`/`failed` de `authenticated` com `42501` e a mensagem casada, e só `service_role` marca publicada (P7), transições legítimas (agendar/cancelar/voltar a rascunho) permitidas, **excluir não existe** nem para o SuperAdmin (P8), CHECK de `networks` e `status` comportamental (P9), e guardas estruturais — trigger de publicação INVOKER com `search_path` fixo, ausência de delete e de grant de `anon`, WITH CHECK real no insert e no update, as três políticas citando `marketing.manage` e as colunas projetadas (P9b) |
+| Q | ministérios e perfis de rede (0015) + a guarda de audiência da 0021: `anon` sem grant nenhum (Q1), membro ativo lê os ministérios da própria igreja com **líder pelo nome e contagem vinda de `ministry_members`** (Q2), `invited` não lê e quem não tem `members.manage` lê mas não escreve (Q3), cruzar igreja não vale nem lendo nem escrevendo (Q4), quem gerencia escreve na própria (Q5), @handle de rede é gravado por `church.manage` (Q6) e **marcar `connected` é impossível pelo app** — `enforce_social_connection` recusa `authenticated` com `42501`, inclusive nascendo conectada (Q7) —, estrutura anti-deriva com políticas, grants, view e o CHECK de rede sem `tiktok` (Q8). Q9/Q9b/Q9c são a 0021: líder ou participante de outra igreja **e de vínculo `invited`** recusados, a mesma escrita correta aceita (sonda anti-no-op) e os dois triggers conferidos no catálogo |
+| R | favoritos e preferências do visitante (0016): `anon` não lê nenhuma das duas (R1), cada um vê só a própria lista — inclusive quem não tem vínculo nenhum (R2), escrever na lista do outro cai no `WITH CHECK` (R3), o caminho honesto funciona: salvar na própria lista e trocar as próprias preferências (R4), estrutura com uma política `for all` por tabela, sem update de favorito, e o CHECK de interesses **sem** `tiktok` (R5) |
+| S | redes de igrejas / organizações (0017): só o SuperAdmin cria rede e associa igreja (S1), o membro vê apenas as redes das próprias igrejas — a estrutura inteira da plataforma não aparece (S2), membro não cria, não se autoassocia e não desassocia (S3), anônimo e sem vínculo não veem nada (S4), estrutura: escrita exclusiva de SuperAdmin nas duas tabelas e `slug` único (S5) |
+| T | suporte (0018): quem abriu vê o chamado, o vizinho de outra igreja não, SuperAdmin vê tudo (T1), **gerente da mesma igreja não lê** ticket que não é dele — audiência apertada de propósito, porque print de chamado traz terceiro (T2), abrir registrado com o autor da sessão e a igreja do assunto própria (T3), responder só dentro do direito (T4), fechar por quem abriu e **sem delete nenhum** (T5), estrutura: sem grant de `anon` e `can_read_ticket` `DEFINER` com `search_path` fixo (T6) |
+| U | eventos de segurança (0019): a RPC `log_security_event` é a única porta de entrada, grava `actor_id = auth.uid()` e recusa tipo fora dos dois (U1), o SuperAdmin lê o que a RPC gravou com o nome de quem tentou e as duas views agregam o resumo do painel (U2), sem vínculo não se lê e anônimo nem executa a RPC (U3), estrutura: uma política de leitura e **nenhum grant de escrita** para ninguém (U4) |
 
 Detalhes que valem a leitura:
 
@@ -1886,11 +2344,11 @@ Detalhes que valem a leitura:
   `marketing_campaigns` (grupo P). **Automações (Fase 7) e IA/gerador de texto (Fase 6) não têm tabela
   própria** — são motores locais que rodam no navegador sobre leituras já guardadas (eventos e
   inscrições), então não há política nova para a suíte medir; a rede deles são os testes unitários e a
-  asserção "nenhum segredo na fonte". Ainda sem ligar no banco: a leitura **global** de eventos no painel
-  do SuperAdmin (hoje `—`).
+  asserção "nenhum segredo na fonte". Na versão atual também a leitura **global** de eventos no painel
+  do SuperAdmin é real (`fetchAllEvents` pelo `useAdminEvents`); o `—` só aparece enquanto consulta.
 
-Para rodar no projeto real, quando ele existir: aplique as migrações 0001→0012 e o seed, cole o
-conteúdo de `rls_isolation.sql` no **SQL Editor** e execute — ou, com a CLI:
+Para rodar a suíte no projeto real: aplique as migrações 0001→0021 e o `seed.sql`, cole o conteúdo de
+`rls_isolation.sql` no **SQL Editor** e execute — ou, com a CLI:
 
 ```bash
 supabase db query --linked -f supabase/tests/database/rls_isolation.sql
@@ -1905,10 +2363,10 @@ restrito a `src/services/supabase/client.ts` com a anon key, e nenhuma credencia
 | Fase | Escopo | Estado neste esqueleto |
 |------|--------|------------------------|
 | 1 | Fundação, auth, RBAC, banco, RLS | Schema + RLS prontos; telas auth em demo |
-| 2 | Igrejas, filiais, usuários, equipes, aprovação | **Onboarding de igreja pelo app** (`/app/onboarding` + `createChurch`: insert `pending` com `created_by` da sessão, criador virando `church_admin` pelo trigger 0006); usuários lendo **e escrevendo** no banco (view 0007 + convites 0008); listas de igrejas lendo o real (`churchService`) e a aprovação escrevendo o real (`churchApprovalService`, grupo J), com trilha atômica no banco e leitura de auditoria (`auditService`, grupos K e L, migração 0009); **filiais lendo e escrevendo** (0013 + `branchService`, grupo O — sem delete); equipes mockadas |
+| 2 | Igrejas, filiais, usuários, equipes, aprovação | **Onboarding de igreja pelo app** (`/app/onboarding` + `createChurch`: insert `pending` com `created_by` da sessão, criador virando `church_admin` pelo trigger 0006); usuários lendo **e escrevendo** no banco (view 0007 + convites 0008); listas de igrejas lendo o real (`churchService`) e a aprovação escrevendo o real (`churchApprovalService`, grupo J), com trilha atômica no banco e leitura de auditoria (`auditService`, grupos K e L, migração 0009); **filiais lendo e escrevendo** (0013 + `branchService`, grupo O — sem delete); **equipes/ministérios lendo e escrevendo** (0015 + a guarda de audiência 0021 + `ministryService`, grupo Q — aqui delete **existe**, por decisão da 0015; 0015..0021 ainda só no Postgres embarcado, não no projeto no ar) |
 | 3 | Eventos, calendário, inscrições, check-in, portal | Eventos **lendo e escrevendo** (0011 + `eventService`, grupo M) e inscrições **lendo e escrevendo** (0012 + `registrationService`, grupo N): criação/edição/transição de status com a porta `events.publish`, inscrição pública com lista de espera, contagem real de inscritos, lista/CSV da equipe, check-in por código — quem está na lista de espera só entra com clique explícito — e cancelamento com promoção da fila. **Filial e localização no evento gravam** (0013, M11). Falta upload de capa no Storage e o QR Code impresso |
 | 4 | Google Maps, GPS, localização | **Mapa público real**: Leaflet + OpenStreetMap (decisão sua, sem chave), GPS do navegador **sem geocodificador**, distância por haversine, ordenação por proximidade e botão Rota. Só é plotada igreja com coordenada real; sem coordenada a lista avisa e o pino não é inventado; sem rede os tiles falham com aviso honesto. Coordenadas também são digitáveis nos formulários de igreja, filial e evento |
-| 5 | Divulgação social (Meta/TikTok/WhatsApp) | Campanhas **lendo e escrevendo** no banco (0014 + `marketingService`, grupo P) com RLS por `marketing.manage` e o trigger que **só deixa `service_role` publicar** — o botão Publicar devolve aviso honesto e não marca nada. Distribuição **sem chave** real (WhatsApp/wa.me, copiar link com UTM, Web Share) no painel e na página pública do evento. `/app/redes` mostra todas as contas como **Não conectado**, sem botão de conectar de mentira. Postagem real em rede fica de fora (exige OAuth + backend com tokens) |
+| 5 | Divulgação social (Meta/WhatsApp) | Campanhas **lendo e escrevendo** no banco (0014 + `marketingService`, grupo P) com RLS por `marketing.manage` e o trigger que **só deixa `service_role` publicar** — o botão Publicar devolve aviso honesto e não marca nada. Distribuição **sem chave** real (WhatsApp/wa.me, copiar link com UTM, Web Share) no painel e na página pública do evento. `/app/redes` **lê e escreve** `church_social_accounts` (0015 + `socialAccountService`, grupo Q): @handle editável, escrita só de quem gerencia a igreja, e o selo "Conectada" que não sai do banco não aparece na tela — sem botão de conectar de mentira. Postagem real em rede fica de fora (exige OAuth + backend com tokens). **TikTok saiu do app** (0020 no CHECK de campanha) |
 | 6 | IgrejaConecta AI | **Gerador de texto de campanha local** (`utils/campaignText.ts`, sem IA e sem chave): monta nome, mensagem e hashtags com os dados reais do evento, roda no navegador e salva como rascunho pela mesma porta `marketing.manage` + RLS da 0014. Ligado ao formulário de campanha (**Gerar sugestão**) e à página `/app/ia` (**Gerar texto** + **Criar rascunho**). Artes, vídeos e IA de provedor seguem **Não conectado** — exigem backend que guarde `OPENAI_API_KEY` (a chave nunca vai ao frontend); nada é fingido |
 | 7 | Automações e notificações | **Automações em simulação local** (`utils/automationEngine.ts`, sem provedor e sem chave): motor puro calcula **o que cada regra dispararia agora** com os eventos e inscrições reais da igreja e mostra a mensagem que *seria* enviada. `/app/automacoes` liga/desliga cada regra (interruptor funcional que muda o dry-run na hora) e traz contadores honestos — **Envios reais = 0 · não conectado**. Canais (SMTP/WhatsApp/Push/Interno) e execução/agendamento ficam **Não conectado**: disparar de verdade exige scheduler no servidor + provedor de envio + backend com as chaves, e nada disso existe aqui. Regras em estado local/sessão (sem tabela). Nada envia, agenda ou executa; nada é fingido |
 | 8 | SuperAdmin, relatórios, segurança avançada | Painel do SuperAdmin **lendo o que a RLS já devolve** (`is_superadmin()`), sem migração nem política nova: diretório global de usuários (`adminService`, projeção congelada que não vaza `role_id`), eventos de todas as igrejas (`eventService.fetchAllEvents`), relatórios agregados + CSV (`utils/reports.ts`) e dashboard com contagens reais — tudo gateado em `superadmin` antes de consultar (defesa em profundidade; a política no banco é a 2ª camada). Organizações, Suporte, Integrações, Monitoramento, exportar PDF e receita/IA seguem **"não conectado"/"não existe ainda"**, sem número nem botão morto. "Segurança avançada" (alertas de tentativas suspeitas) não existe aqui e diz "Não conectado" |
@@ -1917,21 +2375,35 @@ restrito a `src/services/supabase/client.ts` com a anon key, e nenhuma credencia
 ## Próximos passos
 
 1. Repetir a suíte de isolamento no projeto Supabase real (`npm run test:rls` já cobre o local). As
-   migrações 0001→0014 e o `seed.sql` **já foram aplicados** lá (`dlucvyjxidrfyjwuouvp`); falta só rodar
-   a suíte contra o projeto real.
+   migrações 0001→0014 e o `seed.sql` **já foram aplicados** lá (`dlucvyjxidrfyjwuouvp`); faltam as
+   0015..0021 — sem elas os grupos Q..U não têm o que medir e as telas novas falham com `42P01` no ar.
+   A 0020 (TikTok fora do CHECK) sobe nesse mesmo deploy: o app já não oferece a rede em lugar nenhum,
+   então banco e tela entram concordando. Depois disso é só rodar a suíte contra o projeto real.
 2. Trocar mocks por consultas via `supabase` tela a tela. **Feito: roster e convites/Usuários
    (Fase 2, passos 1 e 2) — leitura e escrita —, as listas de igrejas (passo 3) — leitura —, a
    aprovação do SuperAdmin (passo 4) — escrita —, sua auditoria (passo 5) — escrita e leitura —,
    eventos (Fase 3, passos 1 e 3) — leitura e escrita —, inscrições (passo 2) — leitura e escrita —,
    filiais e localização (Fase 4) — leitura e escrita —, campanhas (Fase 5) — leitura e escrita, com a
-   publicação bloqueada no banco — e as leituras globais do SuperAdmin (Fase 8) — diretório de usuários,
-   eventos de todas as igrejas e relatórios agregados, gateadas em `superadmin`. O onboarding de igreja
+   publicação bloqueada no banco —, as leituras globais do SuperAdmin (Fase 8) — diretório de usuários,
+   eventos de todas as igrejas e relatórios agregados, gateadas em `superadmin` — e **ministérios e
+   equipe (passo M3a) — leitura e escrita, com a audiência de líder/participante fechada no banco pela
+   0021 — e perfis de rede social (passo M3b) — leitura e escrita do @handle em
+   `church_social_accounts` (0015), com `connected` travado no banco e o TikTok fora das duas
+   superfícies** e **o cadastro institucional e o perfil pessoal (passo M3c) — leitura e escrita em
+   `churches` e `profiles`, com as colunas travadas fora do patch e o e-mail de login de fora** e
+   **o perfil do visitante (passo M3d) — favoritos, preferências e histórico lendo e escrevendo na 0016,
+   com o coração da página de evento gravando de verdade**. **Nenhum arquivo de `src/` importa a loja de
+   mocks** — a cerca que era uma allowlist que só encolhia virou proibição seca, e a mutação M16 prova que
+   ela ainda morre quando uma tela volta ao mock. O onboarding de igreja
    (cadastro pelo `/app/onboarding`, com o criador virando `church_admin` pelo trigger 0006) também
    escreve de verdade — veja a seção própria.**
+   Só falta o M3e, que não é tela: mover `src/data/mock.ts` para `tests/fixtures/` (ele já não é
+   importado por nada em `src/`, então já não chega ao navegador — é limpeza de casa, não de risco).
    o padrão de leitura está em `services/data/churchService.ts`, `eventService.ts`,
-   `registrationService.ts`, `branchService.ts`, `marketingService.ts` e `adminService.ts` (e em
-   `rosterService.ts`), o de escrita em `memberService.ts`, `churchApprovalService.ts`, `eventService.ts`,
-   `branchService.ts` e `marketingService.ts`, e o de escrita que **só** existe por RPC em
+   `registrationService.ts`, `branchService.ts`, `marketingService.ts`, `ministryService.ts` e
+   `adminService.ts` (e em `rosterService.ts`), o de escrita em `memberService.ts`, `churchApprovalService.ts`, `eventService.ts`,
+   `branchService.ts`, `ministryService.ts`, `marketingService.ts` e os dois do visitante
+   (`visitorFavoriteService.ts`, `visitorPreferenceService.ts`), e o de escrita que **só** existe por RPC em
    `registrationService.ts`.
 3. Falta de produto real na tela de Usuários: **enviar o convite por e-mail**. Hoje a linha fica
    `pending` e quem tem a conta vê o banner "Convites para você"; sem um e-mail de verdade, quem

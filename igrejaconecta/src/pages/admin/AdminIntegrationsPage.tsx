@@ -4,7 +4,6 @@ import { PageHeader, Card, CardBody, Badge } from '@/components/common/primitive
 const integrations = [
   { name: 'OpenAI', desc: 'Geração de textos, artes e vídeos.', requirement: 'Chave de API + backend que faça as chamadas (a chave nunca vai ao frontend).' },
   { name: 'Meta (Instagram/Facebook)', desc: 'Graph API — publicação e métricas.', requirement: 'OAuth + revisão de escopos + backend que guarde o token de longa duração.' },
-  { name: 'TikTok', desc: 'Content Posting API.', requirement: 'App aprovado pela plataforma + OAuth + backend.' },
   { name: 'WhatsApp Business', desc: 'Cloud API oficial + webhooks.', requirement: 'Remetente verificado, templates aprovados e backend de webhooks.' },
   { name: 'Google Maps', desc: 'Maps, Places, Geocoding e Routes.', requirement: 'Chave de API com restrições + billing ativo na conta Google.' },
 ] as const

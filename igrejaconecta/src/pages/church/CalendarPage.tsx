@@ -11,7 +11,7 @@ type View = 'month' | 'week' | 'day' | 'list'
 export function CalendarPage() {
   const [view, setView] = useState<View>('month')
   const [category, setCategory] = useState('all')
-  const monthRef = useMemo(() => new Date(2026, 10, 1), []) // novembro/2026 fixo para o demo
+  const [monthRef, setMonthRef] = useState(() => firstOfMonth(new Date()))
   const { rows: agenda, loading, error } = useChurchEvents()
   const { rows: categories } = useEventCategories()
 
@@ -36,6 +36,12 @@ export function CalendarPage() {
     ...Array.from({ length: firstWeekday }, () => null),
     ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
   ]
+
+  const monthLabel = monthRef.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+
+  function shiftMonth(delta: number) {
+    setMonthRef((current) => firstOfMonth(new Date(current.getFullYear(), current.getMonth() + delta, 1)))
+  }
 
   return (
     <div>
@@ -80,9 +86,9 @@ export function CalendarPage() {
       ) : view === 'month' ? (
         <div className="overflow-hidden rounded-xl border border-line bg-white">
           <div className="flex items-center justify-between border-b border-line px-4 py-3">
-            <Button variant="ghost" size="sm" icon={<ChevronLeft className="h-4 w-4" />} aria-label="Anterior" />
-            <p className="font-semibold text-navy">Novembro 2026</p>
-            <Button variant="ghost" size="sm" icon={<ChevronRight className="h-4 w-4" />} aria-label="Próximo" />
+            <Button variant="ghost" size="sm" icon={<ChevronLeft className="h-4 w-4" />} aria-label="Mês anterior" onClick={() => shiftMonth(-1)} />
+            <p className="font-semibold text-navy capitalize">{monthLabel}</p>
+            <Button variant="ghost" size="sm" icon={<ChevronRight className="h-4 w-4" />} aria-label="Mês seguinte" onClick={() => shiftMonth(1)} />
           </div>
           <div className="grid grid-cols-7 border-b border-line bg-surface text-center text-xs font-semibold text-slate-500">
             {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((d) => <div key={d} className="py-2">{d}</div>)}
@@ -112,4 +118,8 @@ export function CalendarPage() {
       )}
     </div>
   )
+}
+
+function firstOfMonth(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), 1)
 }

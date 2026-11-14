@@ -4,8 +4,9 @@ import path from 'node:path'
 import { churches, auditLogs } from '@/data/mock'
 import * as auditService from '@/services/data/auditService'
 import { AUDIT_ACTION, AUDIT_COLUMNS, AUDIT_SELECT, approvalAuditAction, fetchAuditTrail } from '@/services/data/auditService'
-import { APPROVAL_COLUMNS, setChurchApprovalStatus, type ApprovalActor } from '@/services/data/churchApprovalService'
+import { APPROVAL_COLUMNS, setChurchApprovalStatus, type ApprovalActor, type ApprovalResult } from '@/services/data/churchApprovalService'
 import type { ApprovalStatus, Church } from '@/types'
+import { demoSetApproval } from '../fixtures/churchMirror'
 
 const backend = vi.hoisted(() => ({ supabase: null as { from: ReturnType<typeof vi.fn> } | null }))
 vi.mock('@/services/supabase/client', () => backend)
@@ -65,7 +66,7 @@ function approvalProjection(church: Church) {
   return Object.fromEntries(APPROVAL_COLUMNS.map((column) => [column, church[column]]))
 }
 
-function expectFailure(result: Awaited<ReturnType<typeof setChurchApprovalStatus>>) {
+function expectFailure(result: ApprovalResult) {
   expect(result).toEqual({ ok: false, error: expect.any(String) })
   if (result.ok) throw new Error('Falha tratada como aprovação confirmada')
   expect(result.error).not.toBe('')
@@ -86,8 +87,8 @@ function expectOnlyChurchUpdate(churchId = 'ch3', next: ApprovalStatus = 'approv
   expect(auditLogs).toEqual(originalAudit)
 }
 
-describe('trilha demo', () => {
-  it('prepara a trilha antes do push e muda a igreja sem await após o push', async () => {
+describe('trilha — loja do fixture', () => {
+  it('prepara a trilha antes de mudar a igreja', () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     const now = '2026-11-10T10:00:00.000Z'
     vi.setSystemTime(new Date(now))
@@ -104,46 +105,38 @@ describe('trilha demo', () => {
       id, actor: admin.email, action: 'igreja.aprovada', target: church.name,
       church: church.name, metadata: { de: 'pending', para: 'approved' }, created_at: now,
     }
-    let nextMicrotask: Pick<Church, 'approval_status' | 'updated_at'> | undefined
     const push = vi.spyOn(auditLogs, 'push').mockImplementation((...rows) => {
       expect(church).toEqual(before)
       expect(rows).toEqual([expectedLog])
-      const length = Array.prototype.push.apply(auditLogs, rows)
-      queueMicrotask(() => {
-        nextMicrotask = { approval_status: church.approval_status, updated_at: church.updated_at }
-      })
-      return length
+      return Array.prototype.push.apply(auditLogs, rows)
     })
 
-    const result = await setChurchApprovalStatus('ch3', 'approved', admin)
+    const result = demoSetApproval('ch3', 'approved', admin)
     expect(result).toEqual({ ok: true, church: approvalProjection(church) })
     expect(church).toEqual({ ...before, approval_status: 'approved', updated_at: now })
-    expect(nextMicrotask).toEqual({ approval_status: 'approved', updated_at: now })
     expect(uuid).toHaveBeenCalledOnce()
     expect(action).toHaveBeenCalledExactlyOnceWith('pending', 'approved')
     expect(push).toHaveBeenCalledExactlyOnceWith(expectedLog)
     expect(auditLogs.slice()).toEqual([...originalAudit, expectedLog])
-    expect((await fetchAuditTrail())[0]).toEqual(expectedLog)
   })
 
-  it('não registra recusa de papel, sessão ausente ou igreja inexistente', async () => {
+  it('não registra recusa de papel nem igreja inexistente', () => {
     for (const role of ['church_admin', 'manager', 'pastor', 'communicator', 'visitor', undefined] as const) {
-      expectFailure(await setChurchApprovalStatus('ch3', 'approved', { ...admin, role }))
+      expectFailure(demoSetApproval('ch3', 'approved', { ...admin, role }))
     }
-    expectFailure(await setChurchApprovalStatus('ch3', 'approved'))
-    expectFailure(await setChurchApprovalStatus('inexistente', 'approved', admin))
+    expectFailure(demoSetApproval('inexistente', 'approved', admin))
     expect(auditLogs).toEqual(originalAudit)
     expect(churches).toEqual(originalChurches)
   })
 
-  it.each(statuses)('repetir %s não muda a data nem prepara ou acrescenta trilha', async (status) => {
+  it.each(statuses)('repetir %s não muda a data nem prepara ou acrescenta trilha', (status) => {
     const church = churches.find((c) => c.id === 'ch3')!
     church.approval_status = status
     const before = structuredClone(churches)
     const uuid = vi.spyOn(crypto, 'randomUUID')
     const push = vi.spyOn(auditLogs, 'push')
     for (let attempt = 0; attempt < 2; attempt++) {
-      expect(await setChurchApprovalStatus(church.id, status, admin)).toEqual({ ok: true, church: approvalProjection(church) })
+      expect(demoSetApproval(church.id, status, admin)).toEqual({ ok: true, church: approvalProjection(church) })
     }
     expect(uuid).not.toHaveBeenCalled()
     expect(push).not.toHaveBeenCalled()
@@ -151,7 +144,7 @@ describe('trilha demo', () => {
     expect(auditLogs.slice()).toEqual(originalAudit)
   })
 
-  it.each(['ação', 'UUID', 'data', 'push'] as const)('falha em %s deixa igreja e histórico intactos', async (stage) => {
+  it.each(['ação', 'UUID', 'data', 'push'] as const)('falha em %s deixa igreja e histórico intactos', (stage) => {
     const church = churches.find((c) => c.id === 'ch3')!
     const before = structuredClone(church)
     const failure = new Error(`Falha de preparação: ${stage}`)
@@ -161,23 +154,18 @@ describe('trilha demo', () => {
         : stage === 'data' ? vi.spyOn(Date.prototype, 'toISOString').mockImplementation(fail)
           : vi.spyOn(auditLogs, 'push').mockImplementation(fail)
 
-    // O hook aceita rejeição ou falha explícita, nunca aprovação parcial.
-    const outcome = await setChurchApprovalStatus('ch3', 'approved', admin).then(
-      (result) => ({ result }),
-      (error: unknown) => ({ error }),
-    )
+    // A trilha precede a igreja: se a preparação estoura, nada é escrito nem mutado.
+    expect(() => demoSetApproval('ch3', 'approved', admin)).toThrow(failure)
     expect(spy).toHaveBeenCalledOnce()
     spy.mockRestore()
-    if ('result' in outcome) expectFailure(outcome.result)
-    else expect(outcome.error).toBe(failure)
     expect(church).toEqual(before)
     expect(churches).toEqual(originalChurches)
     expect(auditLogs).toEqual(originalAudit)
   })
 
-  it('registra suspensão e reativação com IDs distintos e sem reescrever o histórico', async () => {
-    await setChurchApprovalStatus('ch1', 'suspended', admin)
-    await setChurchApprovalStatus('ch1', 'approved', admin)
+  it('registra suspensão e reativação com IDs distintos e sem reescrever o histórico', () => {
+    demoSetApproval('ch1', 'suspended', admin)
+    demoSetApproval('ch1', 'approved', admin)
     const added = auditLogs.slice(originalAudit.length)
     expect(added.map((l) => l.action)).toEqual(['igreja.suspensa', 'igreja.reativada'])
     expect(added.map((l) => l.metadata)).toEqual([{ de: 'approved', para: 'suspended' }, { de: 'suspended', para: 'approved' }])
@@ -189,10 +177,10 @@ describe('trilha demo', () => {
     expect(approvalAuditAction(previous, next)).toBe(action)
   })
 
-  it.each(transitions)('persiste %s → %s com o mesmo verbo %s no demo', async (previous, next, action) => {
+  it.each(transitions)('persiste %s → %s com o mesmo verbo %s', (previous, next, action) => {
     const church = churches.find((c) => c.id === 'ch3')!
     church.approval_status = previous
-    const result = await setChurchApprovalStatus(church.id, next, admin)
+    const result = demoSetApproval(church.id, next, admin)
     expect(result).toEqual({ ok: true, church: approvalProjection(church) })
     expect(church.approval_status).toBe(next)
     expect(auditLogs.slice(originalAudit.length)).toEqual([expect.objectContaining({
@@ -205,6 +193,11 @@ describe('trilha demo', () => {
 
 describe('contrato Supabase da trilha (cliente simulado)', () => {
   beforeEach(useRealClient)
+
+  it('sessão ausente recusa antes de qualquer chamada ao banco', async () => {
+    expectFailure(await setChurchApprovalStatus('ch3', 'approved'))
+    expect(from).not.toHaveBeenCalled()
+  })
 
   it('aguarda um único update e retorna apenas a igreja com os valores do banco', async () => {
     let resolveUpdate!: (value: unknown) => void

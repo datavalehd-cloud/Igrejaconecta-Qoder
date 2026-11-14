@@ -2,18 +2,23 @@ import { Link } from 'react-router-dom'
 import { CalendarDays, Users, Ticket, Megaphone, Plus, Building2 } from 'lucide-react'
 import { PageHeader, Stat, Card, CardHeader, CardBody, Button, Badge } from '@/components/common/primitives'
 import { EventStatusBadge } from '@/components/common/StatusBadges'
-import { campaigns, members } from '@/data/mock'
 import { useAuth } from '@/contexts/AuthContext'
+import { useChurchBranches } from '@/hooks/useBranches'
+import { useChurchCampaigns } from '@/hooks/useCampaigns'
 import { useMyChurches } from '@/hooks/useChurches'
 import { useChurchEvents } from '@/hooks/useEvents'
 import { useRegistrationStats } from '@/hooks/useRegistrations'
+import { useRoster } from '@/hooks/useRoster'
 import { formatDate } from '@/utils/format'
 
 export function ChurchDashboardPage() {
-  const { session, mode } = useAuth()
+  const { session } = useAuth()
   const { rows: myChurches, loading: churchesLoading } = useMyChurches()
   const { rows: myEvents, loading: eventsLoading } = useChurchEvents()
   const { rows: allStats, loading: statsLoading } = useRegistrationStats()
+  const { rows: roster, loading: rosterLoading } = useRoster()
+  const { rows: myCampaigns, loading: campaignsLoading } = useChurchCampaigns()
+  const { rows: branches, loading: branchesLoading } = useChurchBranches()
   // A sessão pode estar defasada logo depois do onboarding (o vínculo novo ainda
   // não foi recarregado), então a lista de vínculos é o desempate.
   const church = myChurches.find((c) => c.church_id === session?.churchId) ?? myChurches[0]
@@ -21,14 +26,11 @@ export function ChurchDashboardPage() {
   // levam a lugar nenhum: a entrada é o onboarding. SuperAdmin fica de fora —
   // ele aprova igrejas em /admin/igrejas, não cria uma para si.
   const noChurch = !churchesLoading && !church && session?.role !== 'superadmin'
-  // Em modo real só o que o banco respondeu aparece como número. Eventos e
-  // inscrições já têm leitura real (Fase 3); campanhas e membros seguem mock,
-  // então o valor é traço, não zero.
-  const pendingWiring = mode === 'supabase'
   const myEventIds = new Set(myEvents.map((e) => e.id))
   const registrationsTotal = allStats
     .filter((s) => myEventIds.has(s.event_id))
     .reduce((total, s) => total + s.active_count, 0)
+  const activeMembers = roster.filter((r) => r.membership_status === 'active').length
 
   return (
     <div>
@@ -66,8 +68,8 @@ export function ChurchDashboardPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Eventos" value={eventsLoading ? '—' : myEvents.length} hint={eventsLoading ? 'consultando a agenda' : `${myEvents.filter((e) => e.status === 'published').length} publicados`} tone="brand" />
         <Stat label="Inscrições" value={statsLoading || eventsLoading ? '—' : registrationsTotal} hint={statsLoading || eventsLoading ? 'consultando os eventos' : 'inscritos ativos'} tone="green" />
-        <Stat label="Membros" value={pendingWiring ? '—' : members.filter((m) => m.church_id === church?.church_id).length} hint={pendingWiring ? 'veja /app/usuarios' : 'na equipe'} tone="navy" />
-        <Stat label="Campanhas" value={pendingWiring ? '—' : campaigns.length} hint={`${campaigns.filter((c) => c.status === 'published').length} publicadas`} tone="amber" />
+        <Stat label="Membros" value={rosterLoading ? '—' : activeMembers} hint={rosterLoading ? 'consultando a equipe' : 'na equipe'} tone="navy" />
+        <Stat label="Campanhas" value={campaignsLoading ? '—' : myCampaigns.length} hint={campaignsLoading ? 'consultando as campanhas' : `${myCampaigns.filter((c) => c.status === 'published').length} publicadas`} tone="amber" />
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
@@ -118,7 +120,13 @@ export function ChurchDashboardPage() {
                 )}
               </Row>
               <Row label="Plano"><span className="text-slate-600">Gratuito (sem cobrança)</span></Row>
-              <Row label="Filiais"><span className="text-slate-600">{pendingWiring ? '— (ainda em demo)' : '2 cadastradas'}</span></Row>
+              <Row label="Filiais">
+                <span className="text-slate-600">
+                  {branchesLoading
+                    ? 'consultando...'
+                    : `${branches.length} ${branches.length === 1 ? 'cadastrada' : 'cadastradas'}`}
+                </span>
+              </Row>
             </CardBody>
           </Card>
         </div>

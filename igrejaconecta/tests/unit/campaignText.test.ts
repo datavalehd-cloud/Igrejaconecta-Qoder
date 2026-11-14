@@ -58,8 +58,9 @@ describe('generateCampaignText — determinismo e formato', () => {
   it('as redes sugeridas não compartilham referência entre chamadas', () => {
     const a = generateCampaignText(congresso)
     const b = generateCampaignText(congresso)
-    a.networks.push('tiktok')
-    expect(b.networks).not.toContain('tiktok')
+    const antes = [...b.networks]
+    a.networks.push('whatsapp')
+    expect(b.networks).toEqual(antes)
   })
 
   it('a saída inteira valida como rascunho de campanha', () => {
@@ -158,7 +159,7 @@ describe('fronteira de honestidade — nenhum segredo no gerador local', () => {
     const imports = fonte.match(/^import .*$/gm) ?? []
     expect(imports).toEqual([
       "import { formatDateTime, slugify } from '@/utils/format'",
-      "import type { ChurchEvent, SocialNetwork } from '@/types'",
+      "import type { CampaignNetwork, ChurchEvent } from '@/types'",
     ])
   })
 })

@@ -50,6 +50,13 @@ const SETUP = [
   'supabase/migrations/0012_event_registrations.sql',
   'supabase/migrations/0013_branches_location.sql',
   'supabase/migrations/0014_marketing_campaigns.sql',
+  'supabase/migrations/0015_ministries_and_social_accounts.sql',
+  'supabase/migrations/0016_visitor_favorites_preferences.sql',
+  'supabase/migrations/0017_church_networks.sql',
+  'supabase/migrations/0018_support_tickets.sql',
+  'supabase/migrations/0019_security_events.sql',
+  'supabase/migrations/0020_drop_tiktok_from_campaigns.sql',
+  'supabase/migrations/0021_ministry_membership_guard.sql',
   'supabase/seed.sql',
 ]
 const SUITES = ['supabase/tests/database/rls_isolation.sql']

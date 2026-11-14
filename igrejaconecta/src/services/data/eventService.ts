@@ -1,5 +1,4 @@
 import { supabase } from '@/services/supabase/client'
-import { branches, categories, churches, events } from '@/data/mock'
 import { slugify } from '@/utils/format'
 import { validateLatLng } from '@/utils/geo'
 import { can } from '@/utils/rbac'
@@ -79,31 +78,25 @@ type ManagedRow = ChurchEvent & {
 
 /** Eventos no ar, em ordem de início — a lista das páginas públicas. */
 export async function fetchPublicEvents(): Promise<PublicEvent[]> {
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('events')
-      .select(EVENTS_PUBLIC_SELECT.join(','))
-      .eq('status', 'published')
-      .eq('visibility', 'public')
-      .order('starts_at')
-    if (error) throw new Error(error.message)
-    return ((data ?? []) as unknown as PublicRow[]).map(toPublicEvent)
-  }
-  return demoPublicEvents()
+  const { data, error } = await supabase
+    .from('events')
+    .select(EVENTS_PUBLIC_SELECT.join(','))
+    .eq('status', 'published')
+    .eq('visibility', 'public')
+    .order('starts_at')
+  if (error) throw new Error(error.message)
+  return ((data ?? []) as unknown as PublicRow[]).map(toPublicEvent)
 }
 
 /** Um evento pelo slug. Null quando não existe ou não está no ar para quem consulta. */
 export async function fetchPublicEventBySlug(slug: string): Promise<PublicEvent | null> {
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('events')
-      .select(EVENTS_PUBLIC_SELECT.join(','))
-      .eq('slug', slug)
-      .maybeSingle()
-    if (error) throw new Error(error.message)
-    return data ? toPublicEvent(data as unknown as PublicRow) : null
-  }
-  return demoPublicEventBySlug(slug)
+  const { data, error } = await supabase
+    .from('events')
+    .select(EVENTS_PUBLIC_SELECT.join(','))
+    .eq('slug', slug)
+    .maybeSingle()
+  if (error) throw new Error(error.message)
+  return data ? toPublicEvent(data as unknown as PublicRow) : null
 }
 
 /**
@@ -113,16 +106,13 @@ export async function fetchPublicEventBySlug(slug: string): Promise<PublicEvent 
  */
 export async function fetchChurchEvents(churchId?: string): Promise<ChurchEvent[]> {
   if (!churchId) return []
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('events')
-      .select(EVENTS_MANAGED_SELECT.join(','))
-      .eq('church_id', churchId)
-      .order('starts_at')
-    if (error) throw new Error(error.message)
-    return ((data ?? []) as unknown as ManagedRow[]).map(toManagedEvent)
-  }
-  return demoChurchEvents(churchId)
+  const { data, error } = await supabase
+    .from('events')
+    .select(EVENTS_MANAGED_SELECT.join(','))
+    .eq('church_id', churchId)
+    .order('starts_at')
+  if (error) throw new Error(error.message)
+  return ((data ?? []) as unknown as ManagedRow[]).map(toManagedEvent)
 }
 
 /**
@@ -135,113 +125,22 @@ export async function fetchChurchEvents(churchId?: string): Promise<ChurchEvent[
  */
 export async function fetchAllEvents(role?: RoleKey): Promise<ChurchEvent[]> {
   if (role !== 'superadmin') return []
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('events')
-      .select(EVENTS_MANAGED_SELECT.join(','))
-      .order('starts_at')
-    if (error) throw new Error(error.message)
-    return ((data ?? []) as unknown as ManagedRow[]).map(toManagedEvent)
-  }
-  return demoAllEvents(role)
-}
-
-/** Espelha `events_church_read` no ramo `is_superadmin()`: tudo, em qualquer status. */
-export function demoAllEvents(role?: RoleKey): ChurchEvent[] {
-  if (role !== 'superadmin') return []
-  return sortByStartsAt(events.map(demoManagedEvent))
+  const { data, error } = await supabase
+    .from('events')
+    .select(EVENTS_MANAGED_SELECT.join(','))
+    .order('starts_at')
+  if (error) throw new Error(error.message)
+  return ((data ?? []) as unknown as ManagedRow[]).map(toManagedEvent)
 }
 
 /** Catálogo de categorias (0011): leitura pública, escrita só do SuperAdmin. */
 export async function fetchEventCategories(): Promise<EventCategory[]> {
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('event_categories')
-      .select(EVENT_CATEGORY_COLUMNS.join(','))
-      .order('name')
-    if (error) throw new Error(error.message)
-    return (data ?? []) as unknown as EventCategory[]
-  }
-  return demoEventCategories()
-}
-
-/** Espelha `events_public_read` + o WHERE do diretório, com a projeção do público. */
-export function demoPublicEvents(): PublicEvent[] {
-  return sortByStartsAt(
-    events
-      .filter((e) => e.status === 'published' && e.visibility === 'public')
-      .filter((e) => churchIsOnAir(e.church_id))
-      .map(demoPublicEvent),
-  )
-}
-
-export function demoPublicEventBySlug(slug: string): PublicEvent | null {
-  const found = events.find(
-    (e) => e.slug === slug && e.status === 'published' && e.visibility === 'public' && churchIsOnAir(e.church_id),
-  )
-  return found ? demoPublicEvent(found) : null
-}
-
-/** Espelha `events_church_read` recortado para a igreja da sessão, com a projeção de gestão. */
-export function demoChurchEvents(churchId: string): ChurchEvent[] {
-  return sortByStartsAt(events.filter((e) => e.church_id === churchId).map(demoManagedEvent))
-}
-
-export function demoEventCategories(): EventCategory[] {
-  return [...categories].sort((a, b) => a.name.localeCompare(b.name))
-}
-
-/** O evento só está no ar se a igreja também estiver — mesma regra da política.
- * Exportado para o espelho demo de `registrationService` usar a mesma régua. */
-export function churchIsOnAir(churchId: string): boolean {
-  const church = churches.find((c) => c.id === churchId)
-  return church?.approval_status === 'approved' && church.status === 'active'
-}
-
-function demoPublicEvent(event: ChurchEvent): PublicEvent {
-  const church = demoOrganizer(event.church_id)
-  return {
-    ...pickColumns(event, EVENTS_PUBLIC_COLUMNS),
-    category: demoCategoryName(event.category_id),
-    church_name: church?.name ?? event.church_name,
-    church,
-  } as PublicEvent
-}
-
-function demoManagedEvent(event: ChurchEvent): ChurchEvent {
-  return {
-    ...pickColumns(event, EVENTS_MANAGED_COLUMNS),
-    category: demoCategoryName(event.category_id),
-    church_name: event.church_name,
-  } as ChurchEvent
-}
-
-function demoOrganizer(churchId: string): EventOrganizer | null {
-  const church = churches.find((c) => c.id === churchId)
-  if (!church) return null
-  return {
-    id: church.id,
-    name: church.name,
-    slug: church.slug,
-    denomination: church.denomination ?? null,
-    city: church.city ?? null,
-    state: church.state ?? null,
-    whatsapp: church.whatsapp ?? null,
-  }
-}
-
-function demoCategoryName(categoryId: string): string | undefined {
-  return categories.find((c) => c.id === categoryId)?.name
-}
-
-function pickColumns(event: ChurchEvent, columns: readonly (keyof ChurchEvent)[]): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
-  for (const column of columns) out[column] = event[column]
-  return out
-}
-
-function sortByStartsAt<T extends { starts_at: string }>(rows: T[]): T[] {
-  return [...rows].sort((a, b) => a.starts_at.localeCompare(b.starts_at))
+  const { data, error } = await supabase
+    .from('event_categories')
+    .select(EVENT_CATEGORY_COLUMNS.join(','))
+    .order('name')
+  if (error) throw new Error(error.message)
+  return (data ?? []) as unknown as EventCategory[]
 }
 
 function toPublicEvent(row: PublicRow): PublicEvent {
@@ -274,8 +173,8 @@ function toManagedEvent(row: ManagedRow): ChurchEvent {
  *     default do banco e a tela não oferece a opção "pago".
  *
  * As portas de permissão abaixo não são a guarda: a guarda é a política e o
- * trigger. Elas existem pelo mesmo motivo do recorte em `registrationService` —
- * o espelho demo não pode mostrar o que o banco recusaria.
+ * trigger. Elas existem para o recusado ter a mesma mensagem legível que o banco
+ * daria, sem disparar uma consulta condenada.
  */
 
 export const EVENT_MANAGE_DENIED =
@@ -446,19 +345,10 @@ export async function createEvent(
 
   const clean = normalizeDraft(draft)
   const slug = slugify(clean.name)
-  const row = demoEventRow(clean, churchId, slug, status)
-
-  if (!supabase) {
-    if (events.some((e) => e.slug === slug)) return { ok: false, error: eventSlugTaken(slug) }
-    const branchMismatch = demoBranchMismatch(clean.branch_id, churchId)
-    if (branchMismatch) return { ok: false, error: branchMismatch }
-    events.push(row)
-    return { ok: true, event: demoManagedEvent(row) }
-  }
 
   const { data, error } = await supabase
     .from('events')
-    .insert(pickKeys(row, EVENT_INSERT_COLUMNS))
+    .insert(pickKeys({ ...clean, church_id: churchId, slug, status }, EVENT_INSERT_COLUMNS))
     .select(EVENTS_MANAGED_SELECT.join(','))
     .maybeSingle()
   if (error) return { ok: false, error: describeEventDbError(error, slug) }
@@ -475,16 +365,6 @@ export async function updateEvent(id: string, draft: EventDraft, actor: EventAct
   const clean = normalizeDraft(draft)
   const patch = pickKeys(clean, EVENT_PATCH_COLUMNS)
 
-  if (!supabase) {
-    const found = demoEditableEvent(id, actor)
-    if (!found) return { ok: false, error: EVENT_NOT_FOUND }
-    const branchMismatch = demoBranchMismatch(clean.branch_id, found.church_id)
-    if (branchMismatch) return { ok: false, error: branchMismatch }
-    Object.assign(found, patch)
-    found.category = demoCategoryName(clean.category_id)
-    return { ok: true, event: demoManagedEvent(found) }
-  }
-
   const { data, error } = await supabase
     .from('events')
     .update(patch)
@@ -498,19 +378,12 @@ export async function updateEvent(id: string, draft: EventDraft, actor: EventAct
 
 /**
  * Transição de status. Publicar é a única que exige `events.publish`; cancelar e
- * voltar a rascunho são gestão comum. No modo real quem confere é o trigger — a
- * porta daqui é o espelho demo e a mensagem legível.
+ * voltar a rascunho são gestão comum. Quem confere no banco é o trigger — a porta
+ * daqui só adianta a mensagem legível.
  */
 export async function setEventStatus(id: string, status: EventStatus, actor: EventActor): Promise<EventWriteResult> {
   const denied = gateWrite(actor) ?? (status === 'published' ? gatePublish(actor) : null)
   if (denied) return { ok: false, error: denied }
-
-  if (!supabase) {
-    const found = demoEditableEvent(id, actor)
-    if (!found) return { ok: false, error: EVENT_NOT_FOUND }
-    found.status = status
-    return { ok: true, event: demoManagedEvent(found) }
-  }
 
   const { data, error } = await supabase
     .from('events')
@@ -529,59 +402,6 @@ function gateWrite(actor: EventActor): string | null {
 
 function gatePublish(actor: EventActor): string | null {
   return can(actor.role, 'events.publish') ? null : EVENT_PUBLISH_DENIED
-}
-
-/**
- * Espelha o trigger `enforce_event_branch` no modo demo: a filial tem de ser da
- * mesma igreja do evento. Filial inexistente e filial de outra igreja devolvem a
- * mesma mensagem — sem oráculo de existência, igual ao trigger (caso O8).
- */
-function demoBranchMismatch(branchId: string | null | undefined, churchId: string): string | null {
-  if (!branchId) return null
-  const branch = branches.find((b) => b.id === branchId)
-  return branch && branch.church_id === churchId ? null : EVENT_BRANCH_MISMATCH
-}
-
-/**
- * Espelha o USING/WITH CHECK de `events_update`: a linha tem de ser da igreja do
- * autor, e o SuperAdmin é transversal. Não encontrado e sem permissão devolvem a
- * mesma mensagem — sem oráculo de existência, como no modo real.
- */
-function demoEditableEvent(id: string, actor: EventActor): ChurchEvent | undefined {
-  const found = events.find((e) => e.id === id)
-  if (!found) return undefined
-  if (actor.role === 'superadmin') return found
-  return found.church_id === actor.churchId ? found : undefined
-}
-
-function demoEventRow(
-  clean: NormalizedDraft,
-  churchId: string,
-  slug: string,
-  status: EventCreationStatus,
-): ChurchEvent {
-  return {
-    id: crypto.randomUUID(),
-    church_id: churchId,
-    church_name: churches.find((c) => c.id === churchId)?.name,
-    slug,
-    category_id: clean.category_id,
-    category: demoCategoryName(clean.category_id),
-    name: clean.name,
-    description: clean.description,
-    starts_at: clean.starts_at,
-    ends_at: clean.ends_at,
-    address: clean.address,
-    city: clean.city,
-    cover_url: clean.cover_url,
-    capacity: clean.capacity,
-    is_free: true,
-    visibility: clean.visibility,
-    status,
-    branch_id: clean.branch_id,
-    latitude: clean.latitude,
-    longitude: clean.longitude,
-  }
 }
 
 function describeEventDbError(error: { code?: string; message: string }, slug?: string): string {

@@ -1,8 +1,9 @@
 import { useCallback, useMemo } from 'react'
+import { useAuth } from '@/contexts/AuthContext'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useKeyedList } from '@/hooks/useKeyedList'
-import { fetchChurchRegistrations, fetchRegistrationStats } from '@/services/data/registrationService'
-import type { RegistrationStats } from '@/types'
+import { fetchChurchRegistrations, fetchMyRegistrations, fetchRegistrationStats } from '@/services/data/registrationService'
+import type { Registration, RegistrationStats } from '@/types'
 
 /**
  * Leituras de inscrições sobre a mesma base keyed-result das demais: trocar de
@@ -22,6 +23,18 @@ export function useChurchRegistrations() {
     ...useKeyedList(allowed && Boolean(churchId), churchId ?? '', fetcher, 'Não foi possível carregar as inscrições.'),
     allowed,
   }
+}
+
+/**
+ * Inscrições da própria conta — o "Minhas inscrições" de `/visitante/perfil`. O
+ * recorte é o id da sessão, e é por isso que quem se inscreveu sem entrar não vê
+ * nada aqui: a linha não tem dono provado.
+ */
+export function useMyRegistrations() {
+  const { session } = useAuth()
+  const userId = session?.profile.id
+  const fetcher = useCallback(() => fetchMyRegistrations(userId), [userId])
+  return useKeyedList<Registration>(Boolean(userId), userId ?? '', fetcher, 'Não foi possível carregar as suas inscrições.')
 }
 
 /**

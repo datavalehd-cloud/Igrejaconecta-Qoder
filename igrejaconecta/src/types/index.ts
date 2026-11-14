@@ -59,6 +59,8 @@ export interface Church {
   lng?: number | null
   status: ChurchStatus
   approval_status: ApprovalStatus
+  /** Quem cadastrou a igreja (0001). Só leitura: nenhuma tela escreve nesta coluna. */
+  created_by?: string | null
   created_at: string
   updated_at: string
 }
@@ -167,13 +169,18 @@ export interface ChurchBranch {
   leader?: string | null
 }
 
+/** Shape da view `ministry_list` (0015): líder por uuid + nome, contagem no banco. */
 export interface Ministry {
   id: string
   church_id: string
-  name: string
   type: 'ministry' | 'department' | 'team'
-  leader?: string | null
+  name: string
+  description?: string | null
+  leader_id?: string | null
+  leader_name?: string | null
   members_count: number
+  created_at?: string
+  updated_at?: string
 }
 
 export interface EventCategory {
@@ -251,6 +258,8 @@ export interface Registration {
   created_at: string
   /** Nome do evento, resolvido pelo embed `events` — não é coluna da tabela. */
   event_name?: string
+  /** Slug do mesmo embed: a rota pública é `/eventos/:slug`, não por id. */
+  event_slug?: string
 }
 
 /**
@@ -277,21 +286,63 @@ export interface Campaign {
   event_id?: string | null
   name: string
   message?: string | null
-  networks: SocialNetwork[]
+  networks: CampaignNetwork[]
   status: 'draft' | 'scheduled' | 'published' | 'failed' | 'cancelled'
   scheduled_for?: string | null
   created_at?: string | null
   updated_at?: string | null
 }
 
-export type SocialNetwork = 'instagram' | 'facebook' | 'tiktok' | 'whatsapp'
+/**
+ * Redes de PERFIL da igreja — o mesmo conjunto do CHECK de
+ * `church_social_accounts.network` (0015). YouTube está aqui e não está em
+ * campanha de propósito: o banco aceita o perfil e recusa a divulgação.
+ */
+export type SocialNetwork = 'instagram' | 'facebook' | 'whatsapp' | 'youtube'
 
-export interface SocialAccount {
+/**
+ * Redes de CAMPANHA — o CHECK de `marketing_campaigns.networks` depois da 0020,
+ * que tirou o TikTok. É tipo separado de `SocialNetwork` porque os conjuntos não
+ * são iguais; unificá-los faria a tela oferecer uma rede que o banco recusa.
+ */
+export type CampaignNetwork = 'instagram' | 'facebook' | 'whatsapp'
+
+/**
+ * Linha de `church_social_accounts` (0015). `connected` não é editável pelo app:
+ * o trigger `enforce_social_connection` recusa com `42501`, e o único caminho
+ * para `true` é um backend que falou com o provedor.
+ */
+export interface ChurchSocialAccount {
   id: string
+  church_id: string
   network: SocialNetwork
-  label: string
+  handle: string
   connected: boolean
-  expires_at?: string | null
+}
+
+/** Os interesses aceitos pelo CHECK de `visitor_preferences.interests` (0016). */
+export type VisitorInterest = 'jovens' | 'familia' | 'mulheres' | 'homens' | 'acao_social'
+
+/**
+ * Preferência do visitante (0016): uma linha por conta e só a própria conta
+ * alcança. `city` é dado de preferência — nome, e-mail e telefone ficam em
+ * `profiles`, que é de identidade e tem fluxo próprio.
+ */
+export interface VisitorPreferences {
+  user_id: string
+  city: string | null
+  interests: VisitorInterest[]
+  updated_at: string
+}
+
+/**
+ * Favorito do visitante (0016). A chave é o par (conta, evento): não há id
+ * próprio e não há update — o grant da tabela é select/insert/delete.
+ */
+export interface VisitorFavorite {
+  user_id: string
+  event_id: string
+  created_at: string
 }
 
 export interface AIGeneration {

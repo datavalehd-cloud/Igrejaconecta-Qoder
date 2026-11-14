@@ -25,7 +25,7 @@ export function useRoster() {
   useEffect(() => {
     if (!churchId) return
     let alive = true
-    fetchRoster(churchId, role)
+    fetchRoster(churchId)
       .then((rows) => {
         if (alive) setResult({ key, rows, error: null })
       })

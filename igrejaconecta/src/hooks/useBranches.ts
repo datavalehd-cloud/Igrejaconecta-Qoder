@@ -8,8 +8,8 @@ import { fetchChurchBranches } from '@/services/data/branchService'
  * Filiais da igreja da sessão sobre a base keyed-result: trocar de igreja ou de
  * conta descarta a leitura anterior. Qualquer membro **ativo** lê (a política
  * `church_branches_read` é o limite, e o vínculo `invited` não lê — caso O3); as
- * escritas é que ficam atrás de `church.manage`. O `userId` vai junto para o
- * espelho demo aplicar a mesma régua de vínculo ativo que o banco aplica.
+ * escritas é que ficam atrás de `church.manage`. O `userId` vai junto porque o
+ * espelho de teste aplica a mesma régua de vínculo ativo que o banco aplica.
  */
 export function useChurchBranches() {
   const { session } = useAuth()

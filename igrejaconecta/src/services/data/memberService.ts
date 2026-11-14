@@ -1,7 +1,16 @@
-import { churches, members } from '@/data/mock'
-import { can, roleLabels } from '@/utils/rbac'
+import { can } from '@/utils/rbac'
 import { supabase } from '@/services/supabase/client'
 import type { ChurchInvitation, InvitationForMe, InvitationStatus, RoleKey } from '@/types'
+
+/**
+ * Escrita de membros (Fase 2): convite por e-mail, revogação, mudança de papel e
+ * aceite.
+ *
+ * Quem pode o quê é respondido pelo banco — as políticas de `church_invitations`
+ * (0008) e o trigger `trg_church_invitations_role` (0008) — e o erro dele é o que
+ * aparece na tela. O `can(actorRole, ...)` daqui é a primeira camada, a que evita
+ * uma consulta que a RLS devolveria vazia; ela não substitui o banco.
+ */
 
 export interface WriteResult {
   ok: boolean
@@ -11,57 +20,14 @@ export interface WriteResult {
 /** Papéis que uma igreja pode conceder — `superadmin` é global e não entra aqui. */
 export const CHURCH_ROLE_KEYS: RoleKey[] = ['church_admin', 'manager', 'communicator', 'pastor']
 
+export const MEMBER_MANAGE_DENIED = 'Você não tem a permissão “Gerenciar membros” nesta igreja.'
+export const SUPERADMIN_NOT_GRANTABLE = 'O papel SuperAdmin não é concedido por convite.'
+export const SUPERADMIN_NOT_ASSIGNABLE = 'O papel SuperAdmin não é concedido por aqui.'
+
 const normalizeEmail = (email: string) => email.trim().toLowerCase()
 
-/**
- * Escrita de membros (Fase 2, passo 2): convite por e-mail, revogação, mudança de
- * papel e aceite de convite.
- *
- * No modo real nada aqui decide quem pode o quê: as políticas de
- * `church_invitations` (0008) e o trigger de papel respondem, e o erro do banco é
- * o que aparece na tela. Em modo demo não há banco, então a simulação espelha as
- * mesmas recusas — inclusive as que a suíte de RLS prova (grupos H1..H14).
- */
-
-// -- loja demo ----------------------------------------------------------------
-
-const DEMO_DAY = 24 * 60 * 60 * 1000
-const futureDate = (days: number) => new Date(Date.now() + days * DEMO_DAY).toISOString()
-
-/** Convites demo nascem dos membros mockados como "convidado". */
-const demoInvitations: ChurchInvitation[] = members
-  .filter((m) => m.status === 'invited' && m.role && m.user?.email)
-  .map((m) => ({
-    id: `inv-${m.id}`,
-    church_id: m.church_id,
-    email: m.user!.email,
-    role_key: m.role!,
-    status: 'pending' as InvitationStatus,
-    invited_by: m.user_id,
-    expires_at: futureDate(30),
-    created_at: m.created_at,
-  }))
-
-function demoManageAllowed(role?: RoleKey): WriteResult | null {
-  if (can(role, 'members.manage')) return null
-  return { ok: false, error: 'Você não tem a permissão “Gerenciar membros” nesta igreja.' }
-}
-
-function isExpired(invitation: ChurchInvitation) {
-  return new Date(invitation.expires_at).getTime() <= Date.now()
-}
-
-function demoChurchName(churchId: string) {
-  return churches.find((c) => c.id === churchId)?.name ?? 'Igreja'
-}
-
-function demoToForMe(invitation: ChurchInvitation): InvitationForMe {
-  return {
-    ...invitation,
-    church_name: demoChurchName(invitation.church_id),
-    church_slug: churches.find((c) => c.id === invitation.church_id)?.slug ?? '',
-    role_name: roleLabels[invitation.role_key],
-  }
+function manageGate(actorRole?: RoleKey): WriteResult | null {
+  return can(actorRole, 'members.manage') ? null : { ok: false, error: MEMBER_MANAGE_DENIED }
 }
 
 // -- convite ------------------------------------------------------------------
@@ -74,26 +40,9 @@ export async function inviteMember(input: {
 }): Promise<WriteResult> {
   const email = normalizeEmail(input.email)
   if (!email || !email.includes('@')) return { ok: false, error: 'Informe um e-mail válido.' }
-  if (input.roleKey === 'superadmin') return { ok: false, error: 'O papel SuperAdmin não é concedido por convite.' }
-
-  if (!supabase) {
-    const blocked = demoManageAllowed(input.actorRole)
-    if (blocked) return blocked
-    if (demoInvitations.some((i) => i.church_id === input.churchId && normalizeEmail(i.email) === email && i.status === 'pending')) {
-      return { ok: false, error: 'Já existe um convite pendente para este e-mail.' }
-    }
-    demoInvitations.push({
-      id: `inv-${Date.now().toString(36)}`,
-      church_id: input.churchId,
-      email,
-      role_key: input.roleKey,
-      status: 'pending',
-      invited_by: null,
-      expires_at: futureDate(30),
-      created_at: new Date().toISOString(),
-    })
-    return { ok: true }
-  }
+  if (input.roleKey === 'superadmin') return { ok: false, error: SUPERADMIN_NOT_GRANTABLE }
+  const blocked = manageGate(input.actorRole)
+  if (blocked) return blocked
 
   const roleRow = await supabase.from('roles').select('id').eq('key', input.roleKey).maybeSingle()
   if (roleRow.error) return { ok: false, error: describeDbError(roleRow.error) }
@@ -110,7 +59,6 @@ export async function inviteMember(input: {
 }
 
 async function currentUserId(): Promise<string | null> {
-  if (!supabase) return null
   const { data } = await supabase.auth.getUser()
   return data.user?.id ?? null
 }
@@ -126,12 +74,7 @@ function describeDbError(error: { code?: string; message: string }): string {
 const INVITATION_SELECT = 'id, church_id, email, status, invited_by, expires_at, created_at, role:roles(key)'
 
 export async function listInvitations(churchId: string, actorRole?: RoleKey): Promise<ChurchInvitation[]> {
-  if (!supabase) {
-    if (!can(actorRole, 'members.manage')) return []
-    return demoInvitations
-      .filter((i) => i.church_id === churchId && i.status === 'pending' && !isExpired(i))
-      .map((i) => ({ ...i }))
-  }
+  if (!can(actorRole, 'members.manage')) return []
 
   const { data, error } = await supabase
     .from('church_invitations')
@@ -154,14 +97,8 @@ export async function listInvitations(churchId: string, actorRole?: RoleKey): Pr
 }
 
 export async function revokeInvitation(id: string, actorRole?: RoleKey): Promise<WriteResult> {
-  if (!supabase) {
-    const blocked = demoManageAllowed(actorRole)
-    if (blocked) return blocked
-    const invitation = demoInvitations.find((i) => i.id === id)
-    if (!invitation || invitation.status !== 'pending') return { ok: false, error: 'Este convite não está mais pendente.' }
-    invitation.status = 'revoked'
-    return { ok: true }
-  }
+  const blocked = manageGate(actorRole)
+  if (blocked) return blocked
 
   const { data, error } = await supabase
     .from('church_invitations')
@@ -181,16 +118,9 @@ export async function changeMemberRole(input: {
   roleKey: RoleKey
   actorRole?: RoleKey
 }): Promise<WriteResult> {
-  if (input.roleKey === 'superadmin') return { ok: false, error: 'O papel SuperAdmin não é concedido por aqui.' }
-
-  if (!supabase) {
-    const blocked = demoManageAllowed(input.actorRole)
-    if (blocked) return blocked
-    const member = members.find((m) => m.id === input.memberId)
-    if (!member) return { ok: false, error: 'Membro não encontrado.' }
-    member.role = input.roleKey
-    return { ok: true }
-  }
+  if (input.roleKey === 'superadmin') return { ok: false, error: SUPERADMIN_NOT_ASSIGNABLE }
+  const blocked = manageGate(input.actorRole)
+  if (blocked) return blocked
 
   const roleRow = await supabase.from('roles').select('id').eq('key', input.roleKey).maybeSingle()
   if (roleRow.error) return { ok: false, error: describeDbError(roleRow.error) }
@@ -208,15 +138,12 @@ export async function changeMemberRole(input: {
 
 // -- convites endereçados à própria conta -------------------------------------
 
-export async function pendingInvitationsForMe(email?: string): Promise<InvitationForMe[]> {
-  if (!supabase) {
-    if (!email) return []
-    const mine = normalizeEmail(email)
-    return demoInvitations
-      .filter((i) => i.status === 'pending' && !isExpired(i) && normalizeEmail(i.email) === mine)
-      .map(demoToForMe)
-  }
-
+/**
+ * Quem é "eu" não é parâmetro: `pending_invitations_for_me()` (0008) filtra pelo
+ * e-mail **confirmado** de `auth.users`, e é `security defininer` justamente porque
+ * o convidado ainda não tem vínculo que nenhuma política de select deixaria ler.
+ */
+export async function pendingInvitationsForMe(): Promise<InvitationForMe[]> {
   const { data, error } = await supabase.rpc('pending_invitations_for_me')
   if (error) throw new Error(describeDbError(error))
   return (data ?? []).map((row: Record<string, unknown>) => ({
@@ -234,6 +161,7 @@ export async function pendingInvitationsForMe(email?: string): Promise<Invitatio
   }))
 }
 
+/** Status que o `accept_church_invitation` (0008) devolve, traduzidos para a tela. */
 const ACCEPT_MESSAGES: Record<string, string> = {
   sem_sessao: 'Faça login para aceitar o convite.',
   inexistente: 'Este convite não existe mais.',
@@ -243,46 +171,7 @@ const ACCEPT_MESSAGES: Record<string, string> = {
   papel_bloqueado: 'Este convite não pode ser aceito por aqui.',
 }
 
-export async function acceptInvitation(id: string, email?: string): Promise<WriteResult> {
-  if (!supabase) {
-    const invitation = demoInvitations.find((i) => i.id === id)
-    if (!invitation) return { ok: false, error: ACCEPT_MESSAGES.inexistente }
-    if (invitation.status !== 'pending') return { ok: false, error: ACCEPT_MESSAGES.nao_pendente }
-    if (isExpired(invitation)) {
-      invitation.status = 'expired'
-      return { ok: false, error: ACCEPT_MESSAGES.expirada }
-    }
-    if (!email || normalizeEmail(invitation.email) !== normalizeEmail(email)) {
-      return { ok: false, error: ACCEPT_MESSAGES.email_nao_confirmado }
-    }
-
-    invitation.status = 'accepted'
-    const existing = members.find((m) => m.church_id === invitation.church_id && m.user?.email && normalizeEmail(m.user.email) === normalizeEmail(email))
-    if (existing) {
-      existing.status = 'active'
-      existing.role = invitation.role_key
-      return { ok: true }
-    }
-    const profileId = `u-${invitation.id}`
-    members.push({
-      id: `cm-${invitation.id}`,
-      church_id: invitation.church_id,
-      user_id: profileId,
-      role_id: invitation.role_key,
-      role: invitation.role_key,
-      status: 'active',
-      created_at: new Date().toISOString().slice(0, 10),
-      user: {
-        id: profileId,
-        full_name: email.split('@')[0],
-        email,
-        created_at: new Date().toISOString().slice(0, 10),
-        updated_at: new Date().toISOString().slice(0, 10),
-      },
-    })
-    return { ok: true }
-  }
-
+export async function acceptInvitation(id: string): Promise<WriteResult> {
   const { data, error } = await supabase.rpc('accept_church_invitation', { p_invitation: id })
   if (error) return { ok: false, error: describeDbError(error) }
   const status = String(data)

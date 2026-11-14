@@ -1,7 +1,6 @@
 import { supabase } from '@/services/supabase/client'
-import { campaigns, members } from '@/data/mock'
 import { can } from '@/utils/rbac'
-import type { Campaign, RoleKey, SocialNetwork } from '@/types'
+import type { Campaign, CampaignNetwork, RoleKey } from '@/types'
 
 /**
  * Campanhas de divulgação (0014, Fase 5). Leitura e escrita exigem
@@ -51,7 +50,8 @@ export const CAMPAIGN_NO_CHURCH = 'A sua sessão não tem igreja ativa: quem nã
 export const CAMPAIGN_PUBLISH_NOT_CONNECTED =
   'Nenhuma rede está conectada: publicar de verdade exige OAuth + backend com tokens, que não existem aqui. A campanha continua como rascunho ou agendada — use a distribuição sem chave (WhatsApp, copiar link, compartilhar).'
 
-export const CAMPAIGN_NETWORKS: SocialNetwork[] = ['instagram', 'facebook', 'tiktok', 'whatsapp']
+/** As três redes que a 0020 deixou de pé. TikTok saiu, e a tela não oferece. */
+export const CAMPAIGN_NETWORKS: CampaignNetwork[] = ['instagram', 'facebook', 'whatsapp']
 
 /** Status que o app pode gravar. published/failed só pelo backend (trigger, caso P7). */
 export type WritableCampaignStatus = 'draft' | 'scheduled' | 'cancelled'
@@ -65,7 +65,7 @@ export interface CampaignActor {
 export interface CampaignDraft {
   name: string
   message?: string | null
-  networks: SocialNetwork[]
+  networks: CampaignNetwork[]
   event_id?: string | null
 }
 
@@ -81,35 +81,14 @@ export async function fetchChurchCampaigns(churchId?: string, actor?: CampaignAc
   const everyChurch = actor?.role === 'superadmin'
   if (!everyChurch && !churchId) return []
 
-  if (supabase) {
-    let query = supabase
-      .from('marketing_campaigns')
-      .select(CAMPAIGN_COLUMNS.join(','))
-      .order('created_at', { ascending: false })
-    if (!everyChurch) query = query.eq('church_id', churchId!)
-    const { data, error } = await query
-    if (error) throw new Error(error.message)
-    return (data ?? []) as unknown as Campaign[]
-  }
-  return demoChurchCampaigns(churchId, actor)
-}
-
-/** Espelha `marketing_campaigns_read`: marketing.manage na igreja, ou SuperAdmin. */
-export function demoChurchCampaigns(churchId?: string, actor?: CampaignActor): Campaign[] {
-  if (actor?.role === 'superadmin') return sortByNewest(campaigns.map((c) => pickColumns(c, CAMPAIGN_COLUMNS)))
-  if (!churchId) return []
-  // Pastor e visitante não têm marketing.manage: não leem campanha nenhuma (caso P3).
-  if (!can(actor?.role, 'marketing.manage')) return []
-  // Vínculo `invited` não lê (P3). A checagem só vale quando a sessão informa o
-  // usuário; sem ele o recorte é a igreja, como nas outras leituras.
-  if (actor?.userId && !isActiveMember(actor.userId, churchId)) return []
-  return sortByNewest(
-    campaigns.filter((c) => c.church_id === churchId).map((c) => pickColumns(c, CAMPAIGN_COLUMNS)),
-  )
-}
-
-function isActiveMember(userId: string, churchId: string): boolean {
-  return members.some((m) => m.user_id === userId && m.church_id === churchId && m.status === 'active')
+  let query = supabase
+    .from('marketing_campaigns')
+    .select(CAMPAIGN_COLUMNS.join(','))
+    .order('created_at', { ascending: false })
+  if (!everyChurch) query = query.eq('church_id', churchId!)
+  const { data, error } = await query
+  if (error) throw new Error(error.message)
+  return (data ?? []) as unknown as Campaign[]
 }
 
 export function validateCampaignDraft(draft: CampaignDraft): string | null {
@@ -138,11 +117,6 @@ export async function createCampaign(draft: CampaignDraft, actor: CampaignActor)
     scheduled_for: null,
   }
 
-  if (!supabase) {
-    campaigns.push(row)
-    return { ok: true, campaign: pickColumns(row, CAMPAIGN_COLUMNS) }
-  }
-
   const { data, error } = await supabase
     .from('marketing_campaigns')
     .insert(pickKeys(row, CAMPAIGN_INSERT_COLUMNS))
@@ -166,13 +140,6 @@ export async function updateCampaign(id: string, draft: CampaignDraft, actor: Ca
     name: draft.name.trim(),
     message: cleanText(draft.message),
     networks: dedupe(draft.networks),
-  }
-
-  if (!supabase) {
-    const found = demoEditableCampaign(id, actor)
-    if (!found) return { ok: false, error: CAMPAIGN_NOT_FOUND }
-    Object.assign(found, patch)
-    return { ok: true, campaign: pickColumns(found, CAMPAIGN_COLUMNS) }
   }
 
   const { data, error } = await supabase
@@ -210,13 +177,6 @@ export async function setCampaignStatus(
     scheduled_for: status === 'scheduled' ? scheduledFor! : null,
   }
 
-  if (!supabase) {
-    const found = demoEditableCampaign(id, actor)
-    if (!found) return { ok: false, error: CAMPAIGN_NOT_FOUND }
-    Object.assign(found, patch)
-    return { ok: true, campaign: pickColumns(found, CAMPAIGN_COLUMNS) }
-  }
-
   const { data, error } = await supabase
     .from('marketing_campaigns')
     .update(patch)
@@ -242,29 +202,14 @@ function gateWrite(actor: CampaignActor): string | null {
   return can(actor.role, 'marketing.manage') ? null : CAMPAIGN_MANAGE_DENIED
 }
 
-/** Espelha USING + WITH CHECK de `marketing_campaigns_update`, com SuperAdmin transversal. */
-function demoEditableCampaign(id: string, actor: CampaignActor): Campaign | undefined {
-  const found = campaigns.find((c) => c.id === id)
-  if (!found) return undefined
-  if (actor.role === 'superadmin') return found
-  return found.church_id === actor.churchId ? found : undefined
-}
-
 /** Vazio vira null: é o que a coluna guarda e o que a tela mostra como "—". */
 function cleanText(value?: string | null): string | null {
   const text = value?.trim()
   return text ? text : null
 }
 
-function dedupe(networks: SocialNetwork[]): SocialNetwork[] {
+function dedupe(networks: CampaignNetwork[]): CampaignNetwork[] {
   return Array.from(new Set(networks))
-}
-
-function pickColumns(campaign: Campaign, columns: readonly (keyof Campaign)[]): Campaign {
-  const source = campaign as unknown as Record<string, unknown>
-  const out: Record<string, unknown> = {}
-  for (const column of columns) out[column] = source[column]
-  return out as unknown as Campaign
 }
 
 function pickKeys(row: object, columns: readonly string[]): Record<string, unknown> {
@@ -272,10 +217,6 @@ function pickKeys(row: object, columns: readonly string[]): Record<string, unkno
   const out: Record<string, unknown> = {}
   for (const column of columns) out[column] = source[column]
   return out
-}
-
-function sortByNewest(rows: Campaign[]): Campaign[] {
-  return [...rows].sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
 }
 
 function describeCampaignDbError(error: { code?: string; message: string }): string {

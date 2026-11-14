@@ -9,11 +9,11 @@ import { formatDateTime } from '@/utils/format'
 import type { AuditLog } from '@/types'
 
 export function AuditLogsPage() {
-  const { session, mode } = useAuth()
+  const { session } = useAuth()
   const fetcher = useCallback(() => fetchAuditTrail(), [])
   const { rows, loading, error, reload } = useKeyedList(
     session?.role === 'superadmin',
-    `${mode}|${session?.profile.id ?? ''}|${session?.role ?? ''}`,
+    `${session?.profile.id ?? ''}|${session?.role ?? ''}`,
     fetcher,
     'Não foi possível carregar a auditoria.',
   )
@@ -29,7 +29,7 @@ export function AuditLogsPage() {
     <div>
       <PageHeader
         title="Auditoria"
-        subtitle={mode === 'demo' ? 'Demonstração: registros fictícios e ações desta sessão; recarregar restaura os exemplos.' : 'Histórico de operações registradas, sem edição ou exclusão pelo aplicativo.'}
+        subtitle="Histórico de operações registradas, sem edição ou exclusão pelo aplicativo."
         actions={<Button variant="outline" onClick={reload} icon={<RefreshCw className="h-4 w-4" />}>Atualizar</Button>}
       />
       {error ? (
@@ -49,7 +49,6 @@ export function AuditLogsPage() {
 interface SysLog { id: string; time: string; level: 'info' | 'warn' | 'error'; source: string; message: string }
 
 const sysLogs: SysLog[] = [
-  { id: 's1', time: '2026-11-08 09:12', level: 'error', source: 'tiktok-publish', message: 'OAuth token expirado — publicação abortada (backoff agendado).' },
   { id: 's2', time: '2026-11-08 08:40', level: 'warn', source: 'meta-publish', message: 'Rate limit próximo do limite para a página @ibcentral.' },
   { id: 's3', time: '2026-11-08 08:05', level: 'info', source: 'process-scheduled-jobs', message: '12 jobs de lembrete processados com sucesso.' },
   { id: 's4', time: '2026-11-07 22:31', level: 'info', source: 'whatsapp-webhook', message: 'Webhook validado e 45 status atualizados.' },

@@ -1,22 +1,20 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { churches } from '@/data/mock'
+import { DIRECTORY_COLUMNS, MANAGED_COLUMNS, MAP_COLUMNS } from '@/services/data/churchService'
 import {
-  DIRECTORY_COLUMNS,
-  MANAGED_COLUMNS,
-  MAP_COLUMNS,
   demoDirectoryChurches,
   demoManagedChurches,
   demoMapChurches,
   demoMyChurches,
-} from '@/services/data/churchService'
+} from '../fixtures/churchMirror'
 import type { Church } from '@/types'
 
 /**
  * As listas de igrejas têm duas metades: a RLS (grupo I da suíte SQL) e o código
- * que monta a consulta. Estes testes conferem a segunda — os espelhos demo, que são
- * o que roda em /igrejas, /mapa, /buscar, /admin/igrejas e no painel — e amarram a
- * projeção aos nomes reais do schema, para uma coluna renomeada quebrar aqui em vez
+ * que monta a consulta. Estes testes conferem as duas — a loja em memória do
+ * fixture continua especificando quais igrejas cada tela deve ver, e a projeção fica
+ * amarrada aos nomes reais do schema, para uma coluna renomeada quebrar aqui em vez
  * de quebrar a tela no ar.
  */
 

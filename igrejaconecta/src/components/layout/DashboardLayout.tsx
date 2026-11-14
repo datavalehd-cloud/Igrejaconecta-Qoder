@@ -19,7 +19,7 @@ interface DashboardLayoutProps {
 export function DashboardLayout({ groups, panelLabel, accent = 'brand' }: DashboardLayoutProps) {
   // Painéis são privados: nunca indexar. O título da aba reflete o painel ativo.
   useDocumentMeta({ title: panelLabel, noindex: true })
-  const { session, logout, demoAccounts, switchDemoRole, mode } = useAuth()
+  const { session, logout } = useAuth()
   const [open, setOpen] = useState(false)
   const [userMenu, setUserMenu] = useState(false)
   const navigate = useNavigate()
@@ -118,27 +118,6 @@ export function DashboardLayout({ groups, panelLabel, accent = 'brand' }: Dashbo
 
             {userMenu && (
               <div className="absolute right-0 mt-2 w-64 rounded-xl border border-line bg-white p-2 shadow-lg">
-                {mode === 'demo' && (
-                  <>
-                    <p className="px-2 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                      Trocar papel (demo)
-                    </p>
-                    {demoAccounts.map((acc) => (
-                      <button
-                        key={acc.email}
-                        onClick={() => { switchDemoRole(acc.email); setUserMenu(false) }}
-                        className={cn(
-                          'flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-sm hover:bg-surface',
-                          acc.email === session?.profile.email && 'bg-brand-50 text-brand-700',
-                        )}
-                      >
-                        <span className="truncate">{acc.email}</span>
-                        <span className="ml-2 shrink-0 text-xs text-slate-400">{roleLabels[acc.role]}</span>
-                      </button>
-                    ))}
-                    <div className="my-1 border-t border-line" />
-                  </>
-                )}
                 <button
                   onClick={handleLogout}
                   className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-red-600 hover:bg-red-50"

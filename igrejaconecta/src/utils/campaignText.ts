@@ -1,5 +1,5 @@
 import { formatDateTime, slugify } from '@/utils/format'
-import type { ChurchEvent, SocialNetwork } from '@/types'
+import type { CampaignNetwork, ChurchEvent } from '@/types'
 
 /**
  * Gerador LOCAL de texto de campanha (Fase 6).
@@ -31,7 +31,7 @@ export const CAMPAIGN_TEXT_STYLES: { id: CampaignTextStyle; label: string; hint:
 export interface CampaignText {
   name: string
   message: string
-  networks: SocialNetwork[]
+  networks: CampaignNetwork[]
   hashtags: string[]
 }
 
@@ -53,7 +53,7 @@ const CTAS: Record<CampaignTextStyle, string> = {
 }
 
 /** Redes sugeridas: as três de maior alcance orgânico numa igreja. Editáveis na tela. */
-const DEFAULT_NETWORKS: SocialNetwork[] = ['whatsapp', 'instagram', 'facebook']
+const DEFAULT_NETWORKS: CampaignNetwork[] = ['whatsapp', 'instagram', 'facebook']
 
 export function generateCampaignText(event: ChurchEvent, style: CampaignTextStyle = 'convite'): CampaignText {
   const hashtags = buildHashtags(event)

@@ -1,4 +1,3 @@
-import { auditLogs } from '@/data/mock'
 import { supabase } from '@/services/supabase/client'
 import type { ApprovalStatus, AuditLog } from '@/types'
 
@@ -45,19 +44,12 @@ export function approvalAuditAction(from: ApprovalStatus, to: ApprovalStatus): s
 }
 
 export async function fetchAuditTrail(): Promise<AuditLog[]> {
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('audit_logs')
-      .select(AUDIT_SELECT.join(','))
-      .order('created_at', { ascending: false })
-    if (error) throw new Error(error.message)
-    return ((data ?? []) as unknown as AuditRow[]).map(toAuditLog)
-  }
-  return demoAuditTrail()
-}
-
-export function demoAuditTrail(): AuditLog[] {
-  return [...auditLogs].sort((a, b) => b.created_at.localeCompare(a.created_at))
+  const { data, error } = await supabase
+    .from('audit_logs')
+    .select(AUDIT_SELECT.join(','))
+    .order('created_at', { ascending: false })
+  if (error) throw new Error(error.message)
+  return ((data ?? []) as unknown as AuditRow[]).map(toAuditLog)
 }
 
 function toAuditLog(row: AuditRow): AuditLog {
