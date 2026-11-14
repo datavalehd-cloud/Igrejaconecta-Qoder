@@ -35,7 +35,11 @@ create table if not exists auth.users (
   role text not null default 'authenticated',
   email text,
   encrypted_password text default '',
-  email_confirmed_at timestamptz default now(),
+  -- Sem default de propósito: no Supabase real a coluna nasce NULL e o GoTrue só
+  -- preenche quando o e-mail é confirmado. O default daqui escondia essa
+  -- diferença e fazia pending_invitations_for_me() (0008) ver convite no local e
+  -- não ver no projeto real.
+  email_confirmed_at timestamptz,
   raw_user_meta_data jsonb not null default '{}'::jsonb,
   raw_app_meta_data jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),

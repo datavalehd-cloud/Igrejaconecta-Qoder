@@ -45,6 +45,31 @@ exception when insufficient_privilege or undefined_object then
 end $$;
 
 -- ============================================================================
+-- Linha de base: o que o banco já tem ANTES dos fixtures
+-- ============================================================================
+-- Vários casos comparam TOTAIS (quantas igrejas o diretório mostra, quantas
+-- linhas de auditoria restam). Num banco de teste recém-criado a base é zero e
+-- o número solto funciona; num projeto em uso — que é justamente onde o README
+-- manda rodar antes do deploy — já existem igreja, contas e trilha reais, e o
+-- teste passaria a reclamar de dado que ele não criou. Então cada contagem
+-- abaixo é "base + fixtures": a propriedade medida é a mesma (o papel vê EXATAMENTE
+-- o que os fixtures dele permitem ver, nem mais), só que não depende do banco
+-- estar vazio. As checagens negativas ("não viu a igreja pendente", "0 linhas
+-- da igreja B") continuam globais de propósito: num projeto em uso, vazar uma
+-- igreja real é exatamente a mesma falha.
+-- A base é lida como service_role (BYPASSRLS) para não depender de quem executa
+-- o script ter privilégio de dono.
+
+set local role service_role;
+select set_config('app.base_churches',       (select count(*) from public.churches)::text, false);
+select set_config('app.base_churches_open',  (select count(*) from public.churches where approval_status = 'approved' and status = 'active')::text, false);
+select set_config('app.base_churches_queue', (select count(*) from public.churches where approval_status in ('pending', 'in_review'))::text, false);
+select set_config('app.base_members',        (select count(*) from public.church_members)::text, false);
+select set_config('app.base_profiles',       (select count(*) from public.profiles)::text, false);
+select set_config('app.base_audit',          (select count(*) from public.audit_logs)::text, false);
+reset role;
+
+-- ============================================================================
 -- Fixtures (identifiers fixos, guardados em GUCs app.* para os casos lerem)
 -- ============================================================================
 
@@ -60,12 +85,16 @@ select set_config('app.church_d', '44444444-4444-4444-8444-444444444444', false)
 select set_config('app.church_e', '55555555-5555-4555-8555-555555555555', false);
 
 -- Usuários: o trigger handle_new_user (0001) cria o profile junto.
-insert into auth.users (id, email, raw_user_meta_data) values
-  (current_setting('app.user_a1')::uuid,  'a1@igreja-a.test',  '{"full_name":"Administrador A"}'::jsonb),
-  (current_setting('app.user_a2')::uuid,  'a2@igreja-a.test',  '{"full_name":"Gerente A"}'::jsonb),
-  (current_setting('app.user_b1')::uuid,  'b1@igreja-b.test',  '{"full_name":"Administrador B"}'::jsonb),
-  (current_setting('app.user_su')::uuid,  'su@igrejaconecta.app', '{"full_name":"SuperAdmin"}'::jsonb),
-  (current_setting('app.user_out')::uuid, 'fora@exemplo.test', '{"full_name":"Sem Vinculo"}'::jsonb);
+-- email_confirmed_at é escrito à mão: no Supabase real a coluna não tem default
+-- (nasce NULL até o GoTrue confirmar) e pending_invitations_for_me() (0008) só
+-- devolve convite para conta confirmada. Sem explicitar, o convite simplesmente
+-- não aparece e os casos H deixam de medir o que dizem medir.
+insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at) values
+  (current_setting('app.user_a1')::uuid,  'a1@igreja-a.test',  '{"full_name":"Administrador A"}'::jsonb, now()),
+  (current_setting('app.user_a2')::uuid,  'a2@igreja-a.test',  '{"full_name":"Gerente A"}'::jsonb, now()),
+  (current_setting('app.user_b1')::uuid,  'b1@igreja-b.test',  '{"full_name":"Administrador B"}'::jsonb, now()),
+  (current_setting('app.user_su')::uuid,  'su@igrejaconecta.app', '{"full_name":"SuperAdmin"}'::jsonb, now()),
+  (current_setting('app.user_out')::uuid, 'fora@exemplo.test', '{"full_name":"Sem Vinculo"}'::jsonb, now());
 
 -- created_by fica NULL de propósito: os vínculos dos fixtures são todos
 -- declarados no insert seguinte, então nenhum caso depende da 0006 exceto o
@@ -128,7 +157,10 @@ do $$
 declare n int;
 begin
   select count(*) into n from public.churches;
-  if n <> 2 then raise exception 'RLS-FALHA A1: anon deveria ver só as 2 igrejas aprovadas, viu %', n; end if;
+  if n <> current_setting('app.base_churches_open')::int + 2 then
+    raise exception 'RLS-FALHA A1: anon deveria ver as 2 igrejas aprovadas de fixture somadas ao que ja existia (%), viu %',
+      current_setting('app.base_churches_open'), n;
+  end if;
   if exists (select 1 from public.churches where approval_status = 'pending') then
     raise exception 'RLS-FALHA A1: anon viu uma igreja pendente';
   end if;
@@ -176,7 +208,10 @@ do $$
 declare n int;
 begin
   select count(*) into n from public.churches;
-  if n <> 3 then raise exception 'RLS-FALHA B1: a1 deveria ver 3 igrejas (A,B + a propria D pendente), viu %', n; end if;
+  if n <> current_setting('app.base_churches_open')::int + 3 then
+    raise exception 'RLS-FALHA B1: a1 deveria ver 3 igrejas (A,B + a propria D pendente) mais as % publicas que ja existiam, viu %',
+      current_setting('app.base_churches_open'), n;
+  end if;
   if exists (select 1 from public.churches where id = current_setting('app.church_c')::uuid) then
     raise exception 'RLS-FALHA B1: a1 viu a igreja pendente C, que nao e sua';
   end if;
@@ -262,11 +297,20 @@ do $$
 declare n int;
 begin
   select count(*) into n from public.churches;
-  if n <> 4 then raise exception 'RLS-FALHA B7: superadmin deveria ver as 4 igrejas, viu %', n; end if;
+  if n <> current_setting('app.base_churches')::int + 4 then
+    raise exception 'RLS-FALHA B7: superadmin deveria ver as 4 igrejas de fixture + as % ja existentes, viu %',
+      current_setting('app.base_churches'), n;
+  end if;
   select count(*) into n from public.church_members;
-  if n <> 5 then raise exception 'RLS-FALHA B7: superadmin deveria ver 5 membros, viu %', n; end if;
+  if n <> current_setting('app.base_members')::int + 5 then
+    raise exception 'RLS-FALHA B7: superadmin deveria ver 5 membros de fixture + os % ja existentes, viu %',
+      current_setting('app.base_members'), n;
+  end if;
   select count(*) into n from public.profiles;
-  if n <> 5 then raise exception 'RLS-FALHA B7: superadmin deveria ver 5 profiles, viu %', n; end if;
+  if n <> current_setting('app.base_profiles')::int + 5 then
+    raise exception 'RLS-FALHA B7: superadmin deveria ver 5 profiles de fixture + os % ja existentes, viu %',
+      current_setting('app.base_profiles'), n;
+  end if;
   select count(*) into n from public.system_settings;
   if n <> 2 then raise exception 'RLS-FALHA B7: superadmin deveria ver 2 system_settings, viu %', n; end if;
 end $$;
@@ -424,7 +468,10 @@ do $$
 declare n int;
 begin
   select count(*) into n from public.audit_logs;
-  if n <> 3 then raise exception 'RLS-FALHA C9: audit_logs tem % linhas apos tentativas de forjamento (esperado 3)', n; end if;
+  if n <> current_setting('app.base_audit')::int + 3 then
+    raise exception 'RLS-FALHA C9: audit_logs tem % linhas apos tentativas de forjamento (esperado as 3 de fixture + % ja existentes)',
+      n, current_setting('app.base_audit');
+  end if;
 end $$;
 rollback to savepoint c9;
 
@@ -942,7 +989,10 @@ do $$
 declare n int;
 begin
   select count(*) into n from public.church_roster;
-  if n <> 5 then raise exception 'RLS-FALHA F5: superadmin viu % linhas de roster (esperado 5, todas as igrejas)', n; end if;
+  if n <> current_setting('app.base_members')::int + 5 then
+    raise exception 'RLS-FALHA F5: superadmin viu % linhas de roster (esperado os 5 de fixture + % ja existentes)',
+      n, current_setting('app.base_members');
+  end if;
 end $$;
 rollback to savepoint f5;
 
@@ -992,7 +1042,10 @@ begin
   select count(*) into n from public.system_settings;
   if n <> 0 then raise exception 'RLS-FALHA G3: criador virou admin da plataforma (% system_settings)', n; end if;
   select count(*) into n from public.churches;
-  if n <> 3 then raise exception 'RLS-FALHA G3: criador ve % igrejas (esperado 3: A, B publicas + a propria E)', n; end if;
+  if n <> current_setting('app.base_churches_open')::int + 3 then
+    raise exception 'RLS-FALHA G3: criador ve % igrejas (esperado A, B publicas + a propria E, mais as % ja existentes)',
+      n, current_setting('app.base_churches_open');
+  end if;
   if exists (select 1 from public.churches where id = current_setting('app.church_c')::uuid) then
     raise exception 'RLS-FALHA G3: criador viu a igreja pendente de outra pessoa';
   end if;
@@ -1138,8 +1191,8 @@ rollback to savepoint h6;
 
 -- H7: aceite legítimo — o convidado vira membro com o papel do convite.
 savepoint h7;
-insert into auth.users (id, email, raw_user_meta_data)
-values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee7', 'convidado-h7@exemplo.test', '{"full_name":"Convidado H7"}'::jsonb);
+insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at)
+values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee7', 'convidado-h7@exemplo.test', '{"full_name":"Convidado H7"}'::jsonb, now());
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
 insert into public.church_invitations (church_id, email, role_id, invited_by)
@@ -1177,8 +1230,8 @@ rollback to savepoint h7;
 -- tabela (nenhuma política de select o atende), então buscar o id "dentro" do caso
 -- devolveria 0 linhas e o aceite receberia NULL -- comparar com <> engoliria isso.
 savepoint h8;
-insert into auth.users (id, email, raw_user_meta_data)
-values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee8', 'convidado-h8@exemplo.test', '{"full_name":"Convidado H8"}'::jsonb);
+insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at)
+values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee8', 'convidado-h8@exemplo.test', '{"full_name":"Convidado H8"}'::jsonb, now());
 insert into public.church_invitations (church_id, email, role_id, invited_by)
 values (current_setting('app.church_a')::uuid, 'convidado-h8@exemplo.test',
         (select id from public.roles where key = 'manager'), current_setting('app.user_a1')::uuid);
@@ -1207,8 +1260,8 @@ rollback to savepoint h8;
 
 -- H9: convite expirado não vira vínculo, e o status é materializado.
 savepoint h9;
-insert into auth.users (id, email, raw_user_meta_data)
-values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee9', 'convidado-h9@exemplo.test', '{"full_name":"Convidado H9"}'::jsonb);
+insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at)
+values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee9', 'convidado-h9@exemplo.test', '{"full_name":"Convidado H9"}'::jsonb, now());
 insert into public.church_invitations (church_id, email, role_id, invited_by, expires_at)
 values (current_setting('app.church_a')::uuid, 'convidado-h9@exemplo.test',
         (select id from public.roles where key = 'manager'), current_setting('app.user_a1')::uuid,
@@ -1241,8 +1294,8 @@ rollback to savepoint h9;
 -- H10: convite de superadmin criado por cima do trigger (dono do banco) ainda
 -- não vira papel global no aceite — a segunda trava da RPC.
 savepoint h10;
-insert into auth.users (id, email, raw_user_meta_data)
-values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeee10', 'convidado-h10@exemplo.test', '{"full_name":"Convidado H10"}'::jsonb);
+insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at)
+values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeee10', 'convidado-h10@exemplo.test', '{"full_name":"Convidado H10"}'::jsonb, now());
 insert into public.church_invitations (church_id, email, role_id, invited_by)
 values (current_setting('app.church_a')::uuid, 'convidado-h10@exemplo.test',
         (select id from public.roles where key = 'superadmin'), current_setting('app.user_a1')::uuid);
@@ -1271,8 +1324,8 @@ rollback to savepoint h10;
 
 -- H11: aceite duas vezes não reabre nem duplica.
 savepoint h11;
-insert into auth.users (id, email, raw_user_meta_data)
-values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1', 'convidado-h11@exemplo.test', '{"full_name":"Convidado H11"}'::jsonb);
+insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at)
+values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1', 'convidado-h11@exemplo.test', '{"full_name":"Convidado H11"}'::jsonb, now());
 insert into public.church_invitations (church_id, email, role_id, invited_by)
 values (current_setting('app.church_a')::uuid, 'convidado-h11@exemplo.test',
         (select id from public.roles where key = 'pastor'), current_setting('app.user_a1')::uuid);
@@ -1422,8 +1475,9 @@ begin
     from public.churches
     where approval_status = 'approved' and status = 'active'
   ) d;
-  if with_filter <> 2 then
-    raise exception 'RLS-FALHA I1: diretório devolveu % igrejas para anon, esperava as 2 aprovadas e ativas', with_filter;
+  if with_filter <> current_setting('app.base_churches_open')::int + 2 then
+    raise exception 'RLS-FALHA I1: diretório devolveu % igrejas para anon, esperava as 2 aprovadas e ativas de fixture + % ja existentes',
+      with_filter, current_setting('app.base_churches_open');
   end if;
 
   select count(*) into without_filter from (
@@ -1431,7 +1485,7 @@ begin
            status, approval_status, created_at, updated_at
     from public.churches
   ) d;
-  if without_filter <> 2 then
+  if without_filter <> current_setting('app.base_churches_open')::int + 2 then
     raise exception 'RLS-FALHA I1: sem o WHERE do app a política sozinha deixou anon ver % igrejas', without_filter;
   end if;
 end $$;
@@ -1447,11 +1501,15 @@ declare n int;
 begin
   select count(*) into n from public.churches
    where approval_status = 'approved' and status = 'active';
-  if n <> 2 then raise exception 'RLS-FALHA I2: a1 viu % igrejas no diretório, esperava A e B', n; end if;
+  if n <> current_setting('app.base_churches_open')::int + 2 then
+    raise exception 'RLS-FALHA I2: a1 viu % igrejas no diretório, esperava A e B + as % ja existentes',
+      n, current_setting('app.base_churches_open');
+  end if;
 
   select count(*) into n from public.churches;
-  if n <> 3 then
-    raise exception 'RLS-FALHA I2: a1 deveria ver A, B e a própria D (3 igrejas), viu %', n;
+  if n <> current_setting('app.base_churches_open')::int + 3 then
+    raise exception 'RLS-FALHA I2: a1 deveria ver A, B e a própria D (3 igrejas) mais as % publicas ja existentes, viu %',
+      current_setting('app.base_churches_open'), n;
   end if;
 
   if exists (select 1 from public.churches where id = current_setting('app.church_c')::uuid) then
@@ -1476,8 +1534,9 @@ begin
            status, approval_status, created_at, updated_at, email, website, zip
     from public.churches
   ) m;
-  if n <> 3 then
-    raise exception 'RLS-FALHA I3: a1 recebeu % igrejas na leitura de gestão, esperava A, B e a própria D', n;
+  if n <> current_setting('app.base_churches_open')::int + 3 then
+    raise exception 'RLS-FALHA I3: a1 recebeu % igrejas na leitura de gestão, esperava A, B e a própria D + as % publicas ja existentes',
+      n, current_setting('app.base_churches_open');
   end if;
   if exists (select 1 from public.churches
              where id in (current_setting('app.church_c')::uuid, current_setting('app.church_f')::uuid)) then
@@ -1498,12 +1557,16 @@ begin
            status, approval_status, created_at, updated_at, email, website, zip
     from public.churches
   ) m;
-  if n <> 5 then raise exception 'RLS-FALHA I4: superadmin deveria ver as 5 igrejas, viu %', n; end if;
+  if n <> current_setting('app.base_churches')::int + 5 then
+    raise exception 'RLS-FALHA I4: superadmin deveria ver as 5 igrejas de fixture + as % ja existentes, viu %',
+      current_setting('app.base_churches'), n;
+  end if;
 
   select count(*) into pend from public.churches
    where approval_status = 'pending' or approval_status = 'in_review';
-  if pend <> 3 then
-    raise exception 'RLS-FALHA I4: fila de aprovação com % pendências, esperava 3 (C e D pendentes, F em análise)', pend;
+  if pend <> current_setting('app.base_churches_queue')::int + 3 then
+    raise exception 'RLS-FALHA I4: fila de aprovação com % pendências, esperava C e D pendentes + F em análise + as % ja existentes',
+      pend, current_setting('app.base_churches_queue');
   end if;
 end $$;
 rollback to savepoint i4;
@@ -1553,8 +1616,9 @@ begin
   -- current_church_ids(), o convite sozinho abriria C. As aprovadas seguem
   -- visíveis a qualquer um, e é isso que o número abaixo garante.
   select count(*) into n from public.churches;
-  if n <> 2 then
-    raise exception 'RLS-FALHA I6: convite não aceito mudou a leitura de igrejas de % (esperava só as 2 aprovadas)', n;
+  if n <> current_setting('app.base_churches_open')::int + 2 then
+    raise exception 'RLS-FALHA I6: convite não aceito mudou a leitura de igrejas de % (esperava só as 2 aprovadas + % ja existentes)',
+      n, current_setting('app.base_churches_open');
   end if;
   if exists (select 1 from public.churches where id = current_setting('app.church_c')::uuid) then
     raise exception 'RLS-FALHA I6: convite não aceito liberou a leitura da igreja C';
@@ -1623,8 +1687,9 @@ begin
     from public.churches
     where approval_status = 'approved' and status = 'active'
   ) d;
-  if n <> 3 then
-    raise exception 'RLS-FALHA J1: diretório publico com % igrejas depois de aprovar F, esperava 3', n;
+  if n <> current_setting('app.base_churches_open')::int + 3 then
+    raise exception 'RLS-FALHA J1: diretório publico com % igrejas depois de aprovar F, esperava A, B, F + as % ja existentes',
+      n, current_setting('app.base_churches_open');
   end if;
   if not exists (select 1 from public.churches where id = current_setting('app.church_f')::uuid) then
     raise exception 'RLS-FALHA J1: F aprovada continuo fora do diretorio do anon';
@@ -1645,8 +1710,9 @@ declare n int;
 begin
   select count(*) into n from public.churches
    where approval_status = 'approved' and status = 'active';
-  if n <> 1 then
-    raise exception 'RLS-FALHA J2: suspensa ainda no diretorio publico (% igrejas, esperava so B)', n;
+  if n <> current_setting('app.base_churches_open')::int + 1 then
+    raise exception 'RLS-FALHA J2: suspensa ainda no diretorio publico (% igrejas, esperava so B + as % ja existentes)',
+      n, current_setting('app.base_churches_open');
   end if;
   if exists (select 1 from public.churches where id = current_setting('app.church_a')::uuid) then
     raise exception 'RLS-FALHA J2: anon le a igreja suspensa A';
@@ -1676,8 +1742,9 @@ declare n int;
 begin
   select count(*) into n from public.churches
    where approval_status = 'approved' and status = 'active';
-  if n <> 1 then
-    raise exception 'RLS-FALHA J3: rejeitada no diretorio publico (% igrejas, esperava so A)', n;
+  if n <> current_setting('app.base_churches_open')::int + 1 then
+    raise exception 'RLS-FALHA J3: rejeitada no diretorio publico (% igrejas, esperava so A + as % ja existentes)',
+      n, current_setting('app.base_churches_open');
   end if;
   if exists (select 1 from public.churches where id = current_setting('app.church_b')::uuid) then
     raise exception 'RLS-FALHA J3: anon le a igreja rejeitada B';
@@ -1693,8 +1760,9 @@ do $$
 declare n int;
 begin
   select count(*) into n from (select id, email, zip, website from public.churches) x;
-  if n <> 2 then
-    raise exception 'RLS-FALHA J4: anon contou % linhas pedindo email/zip/website, esperava as 2 aprovadas (a RLS nao esconde coluna)', n;
+  if n <> current_setting('app.base_churches_open')::int + 2 then
+    raise exception 'RLS-FALHA J4: anon contou % linhas pedindo email/zip/website, esperava as 2 aprovadas + % ja existentes (a RLS nao esconde coluna)',
+      n, current_setting('app.base_churches_open');
   end if;
 end $$;
 rollback to savepoint j4;
@@ -1875,7 +1943,10 @@ begin
   end;
 
   select count(*) into n from public.audit_logs;
-  if n <> 5 then raise exception 'RLS-FALHA K5: restam % linhas (3 de fixture + 2 do trigger)', n; end if;
+  if n <> current_setting('app.base_audit')::int + 5 then
+    raise exception 'RLS-FALHA K5: restam % linhas (3 de fixture + 2 do trigger + % ja existentes)',
+      n, current_setting('app.base_audit');
+  end if;
 end $$;
 rollback to savepoint k5;
 
@@ -2032,7 +2103,10 @@ begin
   select to_jsonb(c) into strict after_row from public.churches c where id = current_setting('app.church_a')::uuid;
   if after_row is distinct from before_row then raise exception 'RLS-FALHA L4: igreja mudou com insert descartado'; end if;
   select count(*) into n from public.audit_logs;
-  if n <> 3 then raise exception 'RLS-FALHA L4: historico mudou apos insert descartado'; end if;
+  if n <> current_setting('app.base_audit')::int + 3 then
+    raise exception 'RLS-FALHA L4: historico mudou apos insert descartado (% linhas, esperava as 3 de fixture + % ja existentes)',
+      n, current_setting('app.base_audit');
+  end if;
 end $$;
 rollback to savepoint l4;
 
@@ -2092,8 +2166,8 @@ select set_config('app.event_b_pub', 'eeeeeeee-0000-4000-8000-0000000000b1', fal
 select set_config('app.event_b_dra', 'eeeeeeee-0000-4000-8000-0000000000b2', false);
 select set_config('app.event_c_pub', 'eeeeeeee-0000-4000-8000-0000000000c1', false);
 
-insert into auth.users (id, email, raw_user_meta_data) values
-  (current_setting('app.user_a3')::uuid, 'a3@igreja-a.test', '{"full_name":"Comunicador A"}'::jsonb);
+insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at) values
+  (current_setting('app.user_a3')::uuid, 'a3@igreja-a.test', '{"full_name":"Comunicador A"}'::jsonb, now());
 
 insert into public.church_members (church_id, user_id, role_id, status) values
   (current_setting('app.church_a')::uuid, current_setting('app.user_a3')::uuid,
@@ -3155,9 +3229,9 @@ select set_config('app.branch_a_sede', '99999999-0000-4000-8000-0000000000a1', f
 select set_config('app.branch_a_zs',   '99999999-0000-4000-8000-0000000000a2', false);
 select set_config('app.branch_b_1',    '99999999-0000-4000-8000-0000000000b1', false);
 
-insert into auth.users (id, email, raw_user_meta_data) values
-  (current_setting('app.user_a4')::uuid, 'a4@igreja-a.test', '{"full_name":"Convidada A"}'::jsonb),
-  (current_setting('app.user_ab')::uuid, 'ab@duas-igrejas.test', '{"full_name":"Admin A e Gerente B"}'::jsonb);
+insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at) values
+  (current_setting('app.user_a4')::uuid, 'a4@igreja-a.test', '{"full_name":"Convidada A"}'::jsonb, now()),
+  (current_setting('app.user_ab')::uuid, 'ab@duas-igrejas.test', '{"full_name":"Admin A e Gerente B"}'::jsonb, now());
 
 insert into public.church_members (church_id, user_id, role_id, status) values
   (current_setting('app.church_a')::uuid, current_setting('app.user_a4')::uuid,
@@ -3816,8 +3890,8 @@ select set_config('app.camp_a_dra', '99999999-0000-4000-8000-000000000c01', fals
 select set_config('app.camp_a_sch', '99999999-0000-4000-8000-000000000c02', false);
 select set_config('app.camp_b_dra', '99999999-0000-4000-8000-000000000c03', false);
 
-insert into auth.users (id, email, raw_user_meta_data) values
-  (current_setting('app.user_a5')::uuid, 'a5@igreja-a.test', '{"full_name":"Pastor A"}'::jsonb);
+insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at) values
+  (current_setting('app.user_a5')::uuid, 'a5@igreja-a.test', '{"full_name":"Pastor A"}'::jsonb, now());
 
 insert into public.church_members (church_id, user_id, role_id, status) values
   (current_setting('app.church_a')::uuid, current_setting('app.user_a5')::uuid,
@@ -5594,6 +5668,12 @@ end $$;
 rollback to savepoint u4;
 
 do $$ begin raise notice 'RLS-ISOLATION: todos os casos passaram'; end $$;
+
+-- O SQL Editor do Supabase mostra só o último conjunto de resultados e não dá os
+-- notices do servidor. A mesma frase volta como última linha para a execução no
+-- projeto real ter prova positiva de que percorreu todos os casos — sem isso,
+-- "nenhum erro" e "parou antes do primeiro caso" são indistinguíveis na tela.
+select 'RLS-ISOLATION: todos os casos passaram' as resultado;
 
 -- Nada é persistido: fixtures e testes vivem só nesta transação.
 rollback;

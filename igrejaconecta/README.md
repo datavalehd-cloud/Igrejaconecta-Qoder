@@ -12,7 +12,8 @@ digital e inteligência artificial. **Sem cobrança, assinaturas ou faturamento*
 > sem migração nem política nova, e o que não existe diz "não conectado"** —
 > Supabase Auth (login, cadastro, recuperação,
 > confirmação, redefinição e MFA TOTP) ligado por uma camada única (`AuthBackend`); a suíte de RLS
-> roda num Postgres real com `npm run test:rls` (1052 declarações, grupos A–U, sem Docker e sem projeto).
+> roda num Postgres real com `npm run test:rls` (1061 declarações, grupos A–U, sem Docker e sem
+> projeto) e o mesmo arquivo passou inteiro no projeto Supabase real em uso.
 > A tela de **Usuários** lê a view `church_roster` e escreve de verdade: convite por e-mail,
 > cancelamento, mudança de papel e aceite (`memberService`, migração 0008). O SuperAdmin **aprova,
 > rejeita, suspende e reativa** de verdade (`churchApprovalService`), e o efeito é o que a suíte mede:
@@ -68,8 +69,8 @@ digital e inteligência artificial. **Sem cobrança, assinaturas ou faturamento*
 > `visitor_favorites`, cidade e interesses gravam em `visitor_preferences` (as duas da 0016) e o
 > histórico sai de `event_registrations` pelo id da sessão — **nenhum arquivo de `src/` importa a loja
 > de mocks** (medido no `dist/`: nenhum dado fictício no bundle). O TikTok saiu do aplicativo inteiro — nem
-> perfil nem campanha oferecem a rede. 0015..0021 rodam no Postgres embarcado; no projeto que está no
-> ar elas entram no passo M7 (com a 0020 casada com a saída do TikTok da tela).
+> perfil nem campanha oferecem a rede. 0015..0021 **já estão no projeto que está no ar** (passo M7
+> rodado em 2026-11-14: `M7-OK` no banco e a suíte inteira passando lá, sem resíduo depois do `rollback`).
 
 ## Stack
 
@@ -2146,11 +2147,13 @@ evento some da lista e é contado na nota, nunca inventado.
 
 ### M7 — subir as 0015..0021 para o projeto real
 
-O banco que está no ar (`dlucvyjxidrfyjwuouvp`) tem **0001..0014 + `seed.sql`**. As sete migrações da
-rodada "sem modo demo" ainda não subiram, e é isso que hoje faz `/app/ministerios`, `/app/redes` e
-`/visitante/perfil` caírem em `42P01` no site publicado. Como aqui não há `service_role` nem conexão
-direta com o banco — e não vai haver, é a restrição da rodada —, quem cola é você, no SQL Editor. O
-arquivo que você cola é gerado, não digitado:
+**Rodado no real** (`dlucvyjxidrfyjwuouvp`, 2026-11-14): as sete migrações estão aplicadas e a suíte
+passou inteira lá. O texto abaixo fica porque é o procedimento — o bundle é gerado, não digitado, e
+toda rodada de migração repete os mesmos passos. Antes disso o banco do ar tinha só **0001..0014 +
+`seed.sql`**, e era isso que fazia `/app/ministerios`, `/app/redes` e `/visitante/perfil` caírem em
+`42P01` no site publicado. Como aqui não há `service_role` nem conexão direta com o banco — e não vai
+haver, é a restrição da rodada —, quem cola é você, no SQL Editor. O arquivo que você cola é gerado,
+não digitado:
 
 ```bash
 npm run m7:bundle   # escreve supabase/deploy/m7_apply.sql e imprime o sha256
@@ -2202,13 +2205,27 @@ inteiro — ela roda dentro de uma transação e termina em `rollback`, então n
 objeto de teste no banco. O `shim_supabase.sql` **não** entra nessa conversa: ele existe só para o
 Postgres embarcado local, e num projeto Supabase os schemas `auth.*`/`storage.*` já vêm do provedor.
 
+**Saída medida no projeto real (2026-11-14).**
+
+| Passo | O que apareceu |
+|---|---|
+| `m7_apply.sql` | preflight, `M7-OK: 10 tabelas, 28 politicas, 8 triggers, 6 funcoes conferidos` e o inventário depois do `commit` |
+| Suíte, 1ª vez | `RLS-FALHA A1: anon deveria ver só as 2 igrejas aprovadas, viu 3` — o projeto tem 1 igreja real; daí a linha de base relativa |
+| Suíte, 2ª vez | `RLS-FALHA H7: convidado viu 0 convites para si (esperado 1)` — no real `email_confirmed_at` nasce `NULL`; os dois detalhes estão na seção de testes de RLS |
+| Suíte, agora | `resultado = RLS-ISOLATION: todos os casos passaram`, sem erro (as mesmas 1061 declarações do `npm run test:rls`) |
+| Sonda de resíduo depois do `rollback` | igrejas de fixture 0, `auth.users` de fixture 0, convites 0, trilha de fixture 0 — e a igreja real continua 1 |
+
+O SQL Editor mostra só o **último conjunto de resultados** e não devolve os notices do servidor, então a
+frase de sucesso voltou também como `select` no fim do arquivo: sem isso, "todos os casos passaram" e
+"nem chegou nos casos" são indistinguíveis na tela.
+
 **Depois do apply, o que muda no ar:** as telas novas deixam de falhar em `42P01`. Isso não é publicar —
 o bundle é banco, não bundle de navegador; o site continua o `index-l6tyeyZ3.js` de antes até um deploy
 que você autorizar.
 
 ## Testes de RLS e isolamento entre igrejas
 
-**1052 declarações (grupos A–U)** em `supabase/tests/database/rls_isolation.sql`, executados contra
+**1061 declarações (grupos A–U)** em `supabase/tests/database/rls_isolation.sql`, executados contra
 um Postgres 18.6 real. Rodam **agora, sem projeto Supabase e sem Docker**:
 
 ```bash
@@ -2245,6 +2262,18 @@ Detalhes que valem a leitura:
 
 - O arquivo inteiro vive em **uma transação que termina em `rollback`** — fixtures e testes não
   deixam rastro, nem no projeto real. Cada caso abre um `savepoint` e desfaz, então a ordem não importa.
+- A suíte **roda num projeto em uso**, sem exigir banco vazio: toda contagem positiva compara
+  "linha de base + fixtures" (`app.base_churches`, `app.base_churches_open`, `app.base_churches_queue`,
+  `app.base_members`, `app.base_profiles`, `app.base_audit`, lidos como `service_role` — que tem
+  `bypassrls` — antes de qualquer fixture). Sem isso o primeiro caso reclama do dado que já estava lá.
+  As checagens **negativas** continuam globais de propósito: num projeto em uso, enxergar uma igreja
+  real de terceiros é exatamente a falha que se quer pegar.
+- Fixture de `auth.users` confirma o próprio e-mail (`email_confirmed_at = now()`). No Supabase real a
+  coluna não tem default e nasce `NULL`, e `pending_invitations_for_me()` (0008) só devolve convite
+  para conta confirmada — os casos H passavam no Postgres embarcado e quebravam no projeto real. O
+  `default now()` saiu do shim para ele ficar fiel ao provedor, e a prova por mutação ficou dupla: sem
+  o `now()` no fixture o **H7 quebra medindo** (`convidado viu 0 convites`), e devolvendo o default ao
+  shim o mesmo fixture volta a passar — ou seja, era o shim mascarando.
 - Troca de usuário é feita com `set local role authenticated` + `request.jwt.claims` (o mesmo GUC
   que o PostgREST preenche), e não com dados de teste no frontend.
 - `supabase/tests/local/shim_supabase.sql` **não deve ser aplicado num projeto Supabase real**:
@@ -2427,7 +2456,7 @@ restrito a `src/services/supabase/client.ts` com a anon key, e nenhuma credencia
 | Fase | Escopo | Estado neste esqueleto |
 |------|--------|------------------------|
 | 1 | Fundação, auth, RBAC, banco, RLS | Schema + RLS prontos; telas auth em demo |
-| 2 | Igrejas, filiais, usuários, equipes, aprovação | **Onboarding de igreja pelo app** (`/app/onboarding` + `createChurch`: insert `pending` com `created_by` da sessão, criador virando `church_admin` pelo trigger 0006); usuários lendo **e escrevendo** no banco (view 0007 + convites 0008); listas de igrejas lendo o real (`churchService`) e a aprovação escrevendo o real (`churchApprovalService`, grupo J), com trilha atômica no banco e leitura de auditoria (`auditService`, grupos K e L, migração 0009); **filiais lendo e escrevendo** (0013 + `branchService`, grupo O — sem delete); **equipes/ministérios lendo e escrevendo** (0015 + a guarda de audiência 0021 + `ministryService`, grupo Q — aqui delete **existe**, por decisão da 0015; 0015..0021 ainda só no Postgres embarcado, não no projeto no ar) |
+| 2 | Igrejas, filiais, usuários, equipes, aprovação | **Onboarding de igreja pelo app** (`/app/onboarding` + `createChurch`: insert `pending` com `created_by` da sessão, criador virando `church_admin` pelo trigger 0006); usuários lendo **e escrevendo** no banco (view 0007 + convites 0008); listas de igrejas lendo o real (`churchService`) e a aprovação escrevendo o real (`churchApprovalService`, grupo J), com trilha atômica no banco e leitura de auditoria (`auditService`, grupos K e L, migração 0009); **filiais lendo e escrevendo** (0013 + `branchService`, grupo O — sem delete); **equipes/ministérios lendo e escrevendo** (0015 + a guarda de audiência 0021 + `ministryService`, grupo Q — aqui delete **existe**, por decisão da 0015; 0015..0021 já aplicadas também no projeto no ar — M7, 2026-11-14) |
 | 3 | Eventos, calendário, inscrições, check-in, portal | Eventos **lendo e escrevendo** (0011 + `eventService`, grupo M) e inscrições **lendo e escrevendo** (0012 + `registrationService`, grupo N): criação/edição/transição de status com a porta `events.publish`, inscrição pública com lista de espera, contagem real de inscritos, lista/CSV da equipe, check-in por código — quem está na lista de espera só entra com clique explícito — e cancelamento com promoção da fila. **Filial e localização no evento gravam** (0013, M11). Falta upload de capa no Storage e o QR Code impresso |
 | 4 | Google Maps, GPS, localização | **Mapa público real**: Leaflet + OpenStreetMap (decisão sua, sem chave), GPS do navegador **sem geocodificador**, distância por haversine, ordenação por proximidade e botão Rota. Só é plotada igreja com coordenada real; sem coordenada a lista avisa e o pino não é inventado; sem rede os tiles falham com aviso honesto. Coordenadas também são digitáveis nos formulários de igreja, filial e evento |
 | 5 | Divulgação social (Meta/WhatsApp) | Campanhas **lendo e escrevendo** no banco (0014 + `marketingService`, grupo P) com RLS por `marketing.manage` e o trigger que **só deixa `service_role` publicar** — o botão Publicar devolve aviso honesto e não marca nada. Distribuição **sem chave** real (WhatsApp/wa.me, copiar link com UTM, Web Share) no painel e na página pública do evento. `/app/redes` **lê e escreve** `church_social_accounts` (0015 + `socialAccountService`, grupo Q): @handle editável, escrita só de quem gerencia a igreja, e o selo "Conectada" que não sai do banco não aparece na tela — sem botão de conectar de mentira. Postagem real em rede fica de fora (exige OAuth + backend com tokens). **TikTok saiu do app** (0020 no CHECK de campanha) |
@@ -2438,14 +2467,13 @@ restrito a `src/services/supabase/client.ts` com a anon key, e nenhuma credencia
 
 ## Próximos passos
 
-1. Subir as migrações 0015..0021 ao projeto Supabase real (`dlucvyjxidrfyjwuouvp`, onde já estão
-   0001→0014 + `seed.sql`) colando `supabase/deploy/m7_apply.sql` no SQL Editor — o arquivo é gerado por
-   `npm run m7:bundle`, verifica a própria aplicação dentro da transação e desfaz tudo se faltar objeto
-   (seção [M7](#m7--subir-as-00150021-para-o-projeto-real)). Sem elas os grupos Q..U da suíte não têm o
-   que medir no real e as telas novas falham com `42P01` no ar; a 0020 (TikTok fora do CHECK) sobe junto,
-   então banco e tela entram concordando. **Depois do apply:** rodar a suíte no real (o mesmo editor com
-   `rls_isolation.sql`, que termina em `rollback` e não deixa fixture) e medir no browser o que hoje só
-   está provado local — `/app/ministerios`, `/app/redes`, `/visitante/perfil` e o coração gravando.
+1. **Feito em 2026-11-14:** as 0015..0021 estão no projeto real (`dlucvyjxidrfyjwuouvp`, que tinha só
+   0001→0014 + `seed.sql`) — `supabase/deploy/m7_apply.sql` colado no SQL Editor, `M7-OK` na verificação
+   que o próprio arquivo faz dentro da transação — e a suíte inteira passou lá, com a sonda confirmando
+   zero resíduo depois do `rollback` (seção [M7](#m7--subir-as-00150021-para-o-projeto-real)). O que
+   abriu junto: a 0020 tirou `tiktok` do CHECK real, então banco e tela já concordam. **Falta daqui:**
+   medir no browser, contra o banco real, o que hoje só está provado em SQL — `/app/ministerios`,
+   `/app/redes`, `/visitante/perfil` e o coração da página de evento gravando.
 2. Trocar mocks por consultas via `supabase` tela a tela. **Feito: roster e convites/Usuários
    (Fase 2, passos 1 e 2) — leitura e escrita —, as listas de igrejas (passo 3) — leitura —, a
    aprovação do SuperAdmin (passo 4) — escrita —, sua auditoria (passo 5) — escrita e leitura —,
