@@ -116,9 +116,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const refresh = useCallback(async () => {
-    const next = await backend.restore()
-    setSession(next)
-    return next
+    try {
+      const next = await backend.restore()
+      setSession(next)
+      return next
+    } catch {
+      // `loadSession` não confirmou o papel agora (rede/banco). Melhor manter a
+      // última sessão confirmada e devolver null do que rebaixar para visitor —
+      // a RLS continua sendo o enforcement real, e o próximo reload revalida.
+      console.warn('[auth] refresh: leitura não confirmada; sessão atual mantida')
+      return null
+    }
   }, [])
 
   const selectChurch = useCallback(async (churchId: string | null) => {
