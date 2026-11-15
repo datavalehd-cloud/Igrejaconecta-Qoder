@@ -107,7 +107,7 @@ export function AppRoutes() {
         path="/admin"
         element={
           <ProtectedRoute requireSuperAdmin>
-            <DashboardLayout groups={adminNav} panelLabel="SuperAdmin" accent="navy" />
+            <DashboardLayout groups={adminNav} panelLabel="SuperAdmin" accent="navy" churchSelector />
           </ProtectedRoute>
         }
       >

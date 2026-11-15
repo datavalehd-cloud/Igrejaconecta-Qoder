@@ -38,7 +38,11 @@ export function SupportCenterPage() {
   const { session } = useAuth()
   const userId = session?.profile.id
   const role = session?.role
-  const churchId = session?.churchId
+  // Chamado aberto por SuperAdmin é da plataforma (`church_id` nulo), como sempre
+  // foi: a política de insert (0018) só aceita igreja em que o autor é membro
+  // ativo, e a igreja do seletor não é necessariamente essa. Para os papéis de
+  // igreja o ator continua sendo a própria.
+  const churchId = role === 'superadmin' ? undefined : session?.churchId
 
   const [tickets, setTickets] = useState<SupportTicketRow[] | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
