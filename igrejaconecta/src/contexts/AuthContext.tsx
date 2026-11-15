@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createSupabaseBackend } from '@/services/auth/supabaseBackend'
+import { writeSelectedChurchId } from '@/services/auth/churchSelector'
 import type { AuthBackend, LoginResult, MfaEnrollment, RegisterResult, Session, SimpleResult } from '@/services/auth/authTypes'
 
 export type { Session } from '@/services/auth/authTypes'
@@ -22,6 +23,13 @@ interface AuthContextValue {
    * próprio nome precisa pedir a leitura de novo para o cabeçalho acompanhar.
    */
   refresh: () => Promise<Session | null>
+  /**
+   * SuperAdmin escolhe em qual igreja o painel trabalha; `null` volta ao modo
+   * somente-plataforma. A escolha é gravada no navegador e a sessão é relida:
+   * `loadSession` confere o valor no banco, e para qualquer outro papel ele é
+   * ignorado — quem define a igreja deles é a associação ativa.
+   */
+  selectChurch: (churchId: string | null) => Promise<Session | null>
   logout: () => void
   enrollMfa: () => Promise<SimpleResult & { enrollment?: MfaEnrollment }>
   verifyEnrollment: (factorId: string, code: string) => Promise<SimpleResult>
@@ -113,6 +121,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return next
   }, [])
 
+  const selectChurch = useCallback(async (churchId: string | null) => {
+    writeSelectedChurchId(churchId)
+    return await refresh()
+  }, [refresh])
+
   const enrollMfa = useCallback(async () => {
     return (await backend.enrollMfa?.()) ?? { ok: false, error: 'Não foi possível iniciar o cadastro de MFA.' }
   }, [])
@@ -133,11 +146,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       recover,
       updatePassword,
       refresh,
+      selectChurch,
       logout,
       enrollMfa,
       verifyEnrollment,
     }),
-    [session, loading, initializing, login, confirmMfa, register, recover, updatePassword, refresh, logout, enrollMfa, verifyEnrollment],
+    [session, loading, initializing, login, confirmMfa, register, recover, updatePassword, refresh, selectChurch, logout, enrollMfa, verifyEnrollment],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

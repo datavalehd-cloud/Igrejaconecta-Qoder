@@ -74,7 +74,7 @@ export function AppRoutes() {
         path="/app"
         element={
           <ProtectedRoute>
-            <DashboardLayout groups={churchNav} panelLabel="Painel da Igreja" />
+            <DashboardLayout groups={churchNav} panelLabel="Painel da Igreja" churchSelector />
           </ProtectedRoute>
         }
       >

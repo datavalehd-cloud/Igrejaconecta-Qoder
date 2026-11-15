@@ -55,6 +55,20 @@ export const MAP_COLUMNS = [...DIRECTORY_COLUMNS, 'lat', 'lng'] as const satisfi
 /** Embed do vínculo: a igreja é lida *através* de `church_members`. */
 export const MEMBERSHIP_SELECT = 'church_id, status, roles(key), churches(id, name, city, state, approval_status)'
 
+/**
+ * Projeção do seletor de igreja do painel (SuperAdmin): só o que a lista e o selo
+ * usam. Inclui as não aprovadas de propósito — quem opera a plataforma precisa
+ * ver a pendente para decidir — e quem libera essas linhas é o `is_superadmin()`
+ * da política, não um filtro daqui (mesma base da lista de gestão, 0002).
+ */
+export const SELECTOR_COLUMNS = ['id', 'name', 'approval_status'] as const satisfies readonly (keyof Church)[]
+
+export interface SelectorChurch {
+  id: string
+  name: string
+  approval_status: ApprovalStatus
+}
+
 interface MembershipRow {
   church_id: string
   status: string
@@ -104,6 +118,16 @@ export async function fetchManagedChurches(): Promise<Church[]> {
     .order('name')
   if (error) throw new Error(error.message)
   return (data ?? []) as unknown as Church[]
+}
+
+/** Igrejas do seletor do painel: todas, em ordem de nome, com o status à vista. */
+export async function fetchSelectorChurches(): Promise<SelectorChurch[]> {
+  const { data, error } = await supabase
+    .from('churches')
+    .select(SELECTOR_COLUMNS.join(','))
+    .order('name')
+  if (error) throw new Error(error.message)
+  return (data ?? []) as unknown as SelectorChurch[]
 }
 
 /** Igrejas da conta com o papel de cada uma — o "Minhas igrejas" do perfil. */

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { Menu, X, LogOut, ChevronDown, ShieldCheck } from 'lucide-react'
 import { Logo } from './Logo'
+import { SuperAdminChurchSelector } from '@/components/navigation/SuperAdminChurchSelector'
 import type { NavGroup } from '@/components/navigation/navConfig'
 import { useAuth } from '@/contexts/AuthContext'
 import { roleLabels } from '@/utils/rbac'
@@ -14,9 +15,14 @@ interface DashboardLayoutProps {
   /** Rótulo do painel exibido no topo da sidebar. */
   panelLabel: string
   accent?: 'brand' | 'navy'
+  /**
+   * Abre o slot do seletor de igreja do SuperAdmin (Painel da Igreja). O
+   * componente se esconde sozinho para os demais papéis.
+   */
+  churchSelector?: boolean
 }
 
-export function DashboardLayout({ groups, panelLabel, accent = 'brand' }: DashboardLayoutProps) {
+export function DashboardLayout({ groups, panelLabel, accent = 'brand', churchSelector = false }: DashboardLayoutProps) {
   // Painéis são privados: nunca indexar. O título da aba reflete o painel ativo.
   useDocumentMeta({ title: panelLabel, noindex: true })
   const { session, logout } = useAuth()
@@ -42,6 +48,7 @@ export function DashboardLayout({ groups, panelLabel, accent = 'brand' }: Dashbo
       <div className={cn('mx-5 mb-3 rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white', accentBar)}>
         {panelLabel}
       </div>
+      {churchSelector && <SuperAdminChurchSelector />}
       <nav className="flex-1 overflow-y-auto scrollbar-thin px-3 pb-6">
         {groups.map((group) => (
           <div key={group.title} className="mb-4">

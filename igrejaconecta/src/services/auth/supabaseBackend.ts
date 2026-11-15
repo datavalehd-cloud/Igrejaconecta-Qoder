@@ -1,6 +1,7 @@
 import type { Session as SupabaseSession, SupabaseClient } from '@supabase/supabase-js'
 import { supabase } from '@/services/supabase/client'
 import type { Profile, RoleKey } from '@/types'
+import { readSelectedChurchId } from './churchSelector'
 import type { AuthBackend, Session } from './authTypes'
 
 const ROLE_KEYS: RoleKey[] = ['superadmin', 'church_admin', 'manager', 'communicator', 'pastor', 'visitor']
@@ -59,6 +60,22 @@ export function createSupabaseBackend(): AuthBackend {
     const roleKey = active?.roles?.key
     const role: RoleKey = ROLE_KEYS.includes(roleKey as RoleKey) ? (roleKey as RoleKey) : 'visitor'
 
+    // O seletor do painel só tem efeito para SuperAdmin, e a escolha é conferida
+    // no banco a cada loadSession: linha que não existe (ou que a RLS não
+    // devolve) não vira igreja ativa. Para os demais papéis nem se consulta
+    // `churches` — a igreja é a da associação ativa, e forjar a chave local não
+    // muda nada (caso fixado em tests/unit/churchSelector.test.ts).
+    let churchId: string | undefined
+    if (role === 'superadmin') {
+      const chosen = readSelectedChurchId()
+      if (chosen) {
+        const { data: known, error: probeError } = await client.from('churches').select('id').eq('id', chosen).maybeSingle()
+        churchId = !probeError && known ? chosen : undefined
+      }
+    } else {
+      churchId = active?.church_id
+    }
+
     const { data: factors } = await client.auth.mfa.listFactors()
     const mfaEnrolled = Boolean(factors?.totp?.some((f) => f.status === 'verified'))
     const { data: aal } = await client.auth.mfa.getAuthenticatorAssuranceLevel()
@@ -66,7 +83,7 @@ export function createSupabaseBackend(): AuthBackend {
     return {
       profile,
       role,
-      churchId: role === 'superadmin' ? undefined : active?.church_id,
+      churchId,
       mfaEnrolled,
       mfaVerified: aal?.currentLevel === 'aal2',
     }
