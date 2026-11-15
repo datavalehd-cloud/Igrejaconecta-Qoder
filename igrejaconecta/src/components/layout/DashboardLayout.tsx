@@ -85,8 +85,9 @@ export function DashboardLayout({ groups, panelLabel, accent = 'brand', churchSe
 
   return (
     <div className="min-h-screen bg-surface">
-      {/* Sidebar desktop */}
-      <div className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:z-30">{sidebar}</div>
+      {/* Sidebar desktop — `lg:block` é obrigatório: sem ele o `hidden` venceria,
+          pois `lg:fixed` muda a posição mas não o display. */}
+      <div className="hidden lg:fixed lg:block lg:inset-y-0 lg:left-0 lg:z-30">{sidebar}</div>
 
       {/* Sidebar mobile */}
       {open && (
