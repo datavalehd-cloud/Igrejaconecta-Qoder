@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, Building2, Loader2, RefreshCw, Save } from 'lucide-react'
+import { AlertTriangle, Building2, Loader2, RefreshCw, Save, Search } from 'lucide-react'
 import {
   PageHeader, Card, CardHeader, CardBody, Button, Field, Input, Textarea, Select, Badge, EmptyState,
 } from '@/components/common/primitives'
@@ -20,6 +20,7 @@ import {
   type ChurchProfileDraft,
 } from '@/services/data/churchProfileService'
 import { bucketOfStorageUrl, pathOfStorageUrl, removeMedia, uploadMedia } from '@/services/data/mediaService'
+import { fetchAddressByCep } from '@/services/data/cepService'
 import { UF_LIST } from '@/utils/ufs'
 import type { Church, RoleKey } from '@/types'
 
@@ -114,6 +115,7 @@ function ProfileEditor({
   const [seed, setSeed] = useState<ChurchProfileDraft>(() => draftFrom(church))
   const [form, setForm] = useState<ChurchProfileDraft>(seed)
   const [saving, setSaving] = useState(false)
+  const [cepBusy, setCepBusy] = useState(false)
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
 
   const dirty = FORM_KEYS.some((key) => form[key] !== seed[key])
@@ -141,6 +143,22 @@ function ProfileEditor({
     setForm(next)
     setNotice({ tone: 'ok', text: 'Cadastro atualizado: o que está nos campos é o que o banco devolveu.' })
     onSaved()
+  }
+
+  // A consulta é só sugestão de preenchimento: nada é gravado sem o "Salvar" —
+  // e se o provedor falhar, os campos ficam como estavam, para preencher à mão.
+  async function lookupCep() {
+    if (cepBusy) return
+    setCepBusy(true)
+    setNotice(null)
+    const result = await fetchAddressByCep(form.zip)
+    setCepBusy(false)
+    if (!result.ok) {
+      setNotice({ tone: 'error', text: result.error })
+      return
+    }
+    setForm((current) => ({ ...current, zip: result.zip, address: result.address, city: result.city, state: result.state }))
+    setNotice({ tone: 'ok', text: `Endereço encontrado para o CEP ${result.zip}. Confira o número e salve.` })
   }
 
   return (
@@ -184,7 +202,22 @@ function ProfileEditor({
             <div className="sm:col-span-2">
               <Field label="Endereço completo"><Input value={form.address} onChange={update('address')} /></Field>
             </div>
-            <Field label="CEP"><Input value={form.zip} onChange={update('zip')} /></Field>
+            <Field label="CEP" hint="A busca usa o CEP público da ViaCEP e preenche endereço, cidade e estado — o número da porta continua seu.">
+              <div className="flex gap-2">
+                <Input value={form.zip} onChange={update('zip')} placeholder="00000-000" />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  disabled={cepBusy}
+                  onClick={() => void lookupCep()}
+                  icon={cepBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                >
+                  {cepBusy ? 'Buscando...' : 'Buscar pelo CEP'}
+                </Button>
+              </div>
+            </Field>
             <Field label="Cidade"><Input value={form.city} onChange={update('city')} /></Field>
             <Field label="Estado">
               <Select value={form.state} onChange={update('state')}>
