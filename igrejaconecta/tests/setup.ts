@@ -16,5 +16,6 @@ vi.mock('@/services/supabase/client', () => {
   return {
     supabase: new Proxy(function () {}, { get: boom, apply: boom }),
     supabaseHost: 'teste.supabase.co',
+    supabaseOrigin: 'https://teste.supabase.co',
   }
 })

@@ -21,3 +21,6 @@ export const supabase: SupabaseClient = createClient(url, anonKey, {
 })
 
 export const supabaseHost = new URL(url).host
+
+/** Origem do projeto: é o prefixo de toda URL pública de Storage que o app aceita gravar. */
+export const supabaseOrigin = new URL(url).origin

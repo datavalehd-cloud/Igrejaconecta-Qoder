@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { churches, auditLogs } from '@/data/mock'
+import { churches, auditLogs } from '../fixtures/mock'
 import { APPROVAL_COLUMNS } from '@/services/data/churchApprovalService'
 import { DIRECTORY_COLUMNS } from '@/services/data/churchService'
 import { demoDirectoryChurches, demoSetApproval } from '../fixtures/churchMirror'

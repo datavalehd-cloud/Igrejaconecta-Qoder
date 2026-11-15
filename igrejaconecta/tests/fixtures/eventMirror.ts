@@ -1,4 +1,4 @@
-import { branches, categories, churches, events } from '@/data/mock'
+import { branches, categories, churches, events } from './mock'
 import {
   EVENT_BRANCH_MISMATCH,
   EVENT_MANAGE_DENIED,

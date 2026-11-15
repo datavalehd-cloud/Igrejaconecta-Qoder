@@ -1,4 +1,4 @@
-import { members } from '@/data/mock'
+import { members } from './mock'
 import { can, roleLabels } from '@/utils/rbac'
 import type { RosterEntry, RoleKey } from '@/types'
 

@@ -1,4 +1,4 @@
-import { useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertTriangle, Building2, Loader2, RefreshCw, Save } from 'lucide-react'
 import {
@@ -7,13 +7,19 @@ import {
 import { ApprovalBadge } from '@/components/common/StatusBadges'
 import { Notice } from '@/components/common/Notice'
 import { CoordsField } from '@/components/common/CoordsField'
+import { MediaField } from '@/components/common/MediaField'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useChurchProfile } from '@/hooks/useChurchProfile'
 import {
   updateChurchProfile,
+  fetchChurchMedia,
+  updateChurchMedia,
+  CHURCH_PROFILE_NOT_FOUND,
   CHURCH_PROFILE_NO_CHURCH,
+  type ChurchMedia,
   type ChurchProfileDraft,
 } from '@/services/data/churchProfileService'
+import { bucketOfStorageUrl, pathOfStorageUrl, removeMedia, uploadMedia } from '@/services/data/mediaService'
 import { UF_LIST } from '@/utils/ufs'
 import type { Church, RoleKey } from '@/types'
 
@@ -233,15 +239,172 @@ function ProfileEditor({
           </CardBody>
         </Card>
 
-        <Card>
-          <CardHeader title="Identidade visual" />
-          <CardBody className="space-y-2 text-sm text-slate-500">
-            <p>Logotipo e imagem de capa ainda não têm upload neste aplicativo.</p>
-            <p>Enquanto a tela não envia nem mostra o arquivo, não há botão: oferta sem função é o que não se mostra.</p>
-          </CardBody>
-        </Card>
+        <ChurchMediaEditor churchId={church.id} role={role} />
       </div>
     </form>
+  )
+}
+
+/**
+ * Identidade visual (M4). Lê e grava `logo_url`/`cover_url` por um caminho próprio
+ * (`churchProfileService.updateChurchMedia`), separado do patch de cadastro.
+ *
+ * A ordem das escritas é o que torna a tela honesta: primeiro o Storage confirma o
+ * objeto, depois o banco grava a URL. Se o banco recusar, o objeto recém-enviado é
+ * removido — assim não sobra imagem pública no ar que nenhuma linha referencia. O
+ * que a tela mostra como gravado vem sempre da resposta do banco, não do arquivo
+ * escolhido no aparelho.
+ */
+function ChurchMediaEditor({ churchId, role }: { churchId: string; role: RoleKey | undefined }) {
+  const [media, setMedia] = useState<ChurchMedia | null>(null)
+  const [failure, setFailure] = useState<string | null>(null)
+  const [busy, setBusy] = useState<'church-logo' | 'church-cover' | null>(null)
+  const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
+  const [picked, setPicked] = useState<{ logo: File | null; cover: File | null }>({ logo: null, cover: null })
+
+  const load = useCallback(async () => {
+    try {
+      const row = await fetchChurchMedia(churchId)
+      setMedia(row)
+      setFailure(row ? null : CHURCH_PROFILE_NOT_FOUND)
+    } catch (err) {
+      setMedia(null)
+      setFailure(err instanceof Error ? err.message : 'Não foi possível ler as imagens da igreja.')
+    }
+  }, [churchId])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  async function send(kind: 'church-logo' | 'church-cover') {
+    if (!media) return
+    const file = kind === 'church-logo' ? picked.logo : picked.cover
+    if (!file) return
+    setBusy(kind)
+    setNotice(null)
+
+    const uploaded = await uploadMedia(file, kind, churchId)
+    if (!uploaded.ok) {
+      setBusy(null)
+      setNotice({ tone: 'error', text: uploaded.error })
+      return
+    }
+    const previous = kind === 'church-logo' ? media.logo_url : media.cover_url
+    const next =
+      kind === 'church-logo'
+        ? { logo_url: uploaded.url, cover_url: media.cover_url }
+        : { logo_url: media.logo_url, cover_url: uploaded.url }
+
+    const saved = await updateChurchMedia(next, { churchId, role })
+    if (!saved.ok) {
+      await removeMedia(uploaded.bucket, uploaded.path)
+      setBusy(null)
+      setNotice({ tone: 'error', text: `${saved.error} O arquivo enviado foi removido do Storage: nada ficou gravado.` })
+      return
+    }
+    if (previous && previous !== saved.media[kind === 'church-logo' ? 'logo_url' : 'cover_url']) {
+      const bucket = bucketOfStorageUrl(previous)
+      if (bucket) void removeMedia(bucket, pathOfStorageUrl(previous, bucket))
+    }
+    setMedia(saved.media)
+    setPicked((p) => (kind === 'church-logo' ? { ...p, logo: null } : { ...p, cover: null }))
+    setBusy(null)
+    setNotice({
+      tone: 'ok',
+      text: kind === 'church-logo' ? 'Logotipo gravado no banco.' : 'Capa gravada no banco.',
+    })
+  }
+
+  /** Tirar a imagem do banco: grava null e apaga o objeto (0022). */
+  async function clear(kind: 'church-logo' | 'church-cover') {
+    if (!media) return
+    const previous = kind === 'church-logo' ? media.logo_url : media.cover_url
+    if (!previous) return
+    setBusy(kind)
+    setNotice(null)
+    const next =
+      kind === 'church-logo'
+        ? { logo_url: null, cover_url: media.cover_url }
+        : { logo_url: media.logo_url, cover_url: null }
+    const saved = await updateChurchMedia(next, { churchId, role })
+    if (!saved.ok) {
+      setBusy(null)
+      setNotice({ tone: 'error', text: saved.error })
+      return
+    }
+    const bucket = bucketOfStorageUrl(previous)
+    if (bucket) void removeMedia(bucket, pathOfStorageUrl(previous, bucket))
+    setMedia(saved.media)
+    setBusy(null)
+    setNotice({
+      tone: 'ok',
+      text: kind === 'church-logo' ? 'Logotipo removido do banco e do Storage.' : 'Capa removida do banco e do Storage.',
+    })
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="Identidade visual"
+        subtitle="Logotipo e capa da igreja, enviados para o Storage e gravados no banco."
+      />
+      <CardBody className="space-y-5">
+        {failure && (
+          <p className="flex items-start gap-2 text-sm text-red-700">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              {failure} Sem a resposta do banco a tela não mostra imagem: o que aparecesse aqui seria arquivo inventado.
+            </span>
+          </p>
+        )}
+        {!failure && !media && (
+          <p className="flex items-center gap-2 text-sm text-slate-500">
+            <Loader2 className="h-4 w-4 animate-spin" /> Lendo as imagens da igreja...
+          </p>
+        )}
+        {media && (
+          <>
+            {notice && <Notice tone={notice.tone} text={notice.text} onClose={() => setNotice(null)} />}
+            <div>
+              <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">Logotipo</p>
+              <MediaField
+                kind="church-logo"
+                currentUrl={media.logo_url}
+                pendingFile={picked.logo}
+                busy={busy !== null}
+                className="h-32"
+                onPick={(file) => {
+                  setNotice(null)
+                  setPicked((p) => ({ ...p, logo: file }))
+                  if (file) void send('church-logo')
+                  else void clear('church-logo')
+                }}
+              />
+            </div>
+            <div>
+              <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">Capa</p>
+              <MediaField
+                kind="church-cover"
+                currentUrl={media.cover_url}
+                pendingFile={picked.cover}
+                busy={busy !== null}
+                onPick={(file) => {
+                  setNotice(null)
+                  setPicked((p) => ({ ...p, cover: file }))
+                  if (file) void send('church-cover')
+                  else void clear('church-cover')
+                }}
+              />
+            </div>
+            <p className="text-xs text-slate-400">
+              Enviar substitui a imagem gravada e remove a anterior do Storage. &ldquo;Remover&rdquo; grava null no banco e
+              apaga o arquivo — a tela só mostra como removido depois que o banco confirma.
+            </p>
+          </>
+        )}
+      </CardBody>
+    </Card>
   )
 }
 

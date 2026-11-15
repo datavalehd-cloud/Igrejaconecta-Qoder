@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { churches, auditLogs } from '@/data/mock'
+import { churches, auditLogs } from '../fixtures/mock'
 import * as auditService from '@/services/data/auditService'
 import { AUDIT_ACTION, AUDIT_COLUMNS, AUDIT_SELECT, approvalAuditAction, fetchAuditTrail } from '@/services/data/auditService'
 import { APPROVAL_COLUMNS, setChurchApprovalStatus, type ApprovalActor, type ApprovalResult } from '@/services/data/churchApprovalService'

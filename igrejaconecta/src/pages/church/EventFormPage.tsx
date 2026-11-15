@@ -1,13 +1,15 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Ban, CalendarDays, Save, Send, Undo2, Upload } from 'lucide-react'
+import { ArrowLeft, Ban, CalendarDays, Save, Send, Undo2 } from 'lucide-react'
 import { PageHeader, Card, CardHeader, CardBody, Button, Field, Input, Textarea, Select, Badge, EmptyState } from '@/components/common/primitives'
 import { Notice } from '@/components/common/Notice'
 import { CoordsField } from '@/components/common/CoordsField'
+import { MediaField } from '@/components/common/MediaField'
 import { EventStatusBadge } from '@/components/common/StatusBadges'
 import { useChurchEvents, useEventCategories } from '@/hooks/useEvents'
 import { useChurchBranches } from '@/hooks/useBranches'
 import { usePermissions } from '@/hooks/usePermissions'
+import { bucketOfStorageUrl, pathOfStorageUrl, removeMedia, uploadMedia } from '@/services/data/mediaService'
 import {
   createEvent,
   setEventStatus,
@@ -149,46 +151,89 @@ function EventForm({ event }: { event?: ChurchEvent }) {
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
 
-  const draft: EventDraft = {
-    name: form.name,
-    category_id: form.categoryId,
-    description: form.description,
-    starts_at: fromDateTimeInput(form.startsAt) ?? '',
-    ends_at: fromDateTimeInput(form.endsAt),
-    address: form.address,
-    city: form.city,
-    cover_url: form.coverUrl,
-    capacity: form.capacity.trim() === '' ? null : Number(form.capacity),
-    visibility: form.visibility,
-    branch_id: form.branchId || null,
-    latitude: parseCoord(form.latitude),
-    longitude: parseCoord(form.longitude),
+  const [coverFile, setCoverFile] = useState<File | null>(null)
+  const [coverError, setCoverError] = useState<string | null>(null)
+
+  function buildDraft(coverUrl: string | null): EventDraft {
+    return {
+      name: form.name,
+      category_id: form.categoryId,
+      description: form.description,
+      starts_at: fromDateTimeInput(form.startsAt) ?? '',
+      ends_at: fromDateTimeInput(form.endsAt),
+      address: form.address,
+      city: form.city,
+      cover_url: coverUrl,
+      capacity: form.capacity.trim() === '' ? null : Number(form.capacity),
+      visibility: form.visibility,
+      branch_id: form.branchId || null,
+      latitude: parseCoord(form.latitude),
+      longitude: parseCoord(form.longitude),
+    }
   }
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((f) => ({ ...f, [key]: value }))
   const canPublish = can('events.publish')
 
+  /**
+   * A capa só sobe no salvar. Enviar no momento da escolha deixaria objeto
+   * público órfão toda vez que alguém escolhesse um arquivo e saísse da tela sem
+   * salvar — imagem no ar sem linha nenhuma no banco apontando para ela.
+   */
+  async function resolveCoverUrl(): Promise<{ url: string | null; error: string | null }> {
+    if (!coverFile) return { url: form.coverUrl.trim() || null, error: null }
+    const uploaded = await uploadMedia(coverFile, 'event-cover', churchId)
+    if (!uploaded.ok) return { url: null, error: uploaded.error }
+    return { url: uploaded.url, error: null }
+  }
+
+  /** Capa trocada: o arquivo anterior sai do Storage (0022) para não ficar público sem referência. */
+  function dropReplacedCover(savedUrl: string | null) {
+    const previous = current?.cover_url ?? null
+    if (!previous || previous === savedUrl) return
+    const bucket = bucketOfStorageUrl(previous)
+    if (!bucket) return
+    void removeMedia(bucket, pathOfStorageUrl(previous, bucket))
+  }
+
   async function save(status: EventCreationStatus) {
     setBusy(`create-${status}`)
-    const result = await createEvent(draft, { churchId, role }, status)
+    const cover = await resolveCoverUrl()
+    if (cover.error) {
+      setBusy(null)
+      setCoverError(cover.error)
+      return
+    }
+    const result = await createEvent(buildDraft(cover.url), { churchId, role }, status)
     setBusy(null)
     if (!result.ok) {
       setNotice({ tone: 'error', text: result.error })
       return
     }
+    setCoverFile(null)
     navigate('/app/eventos')
   }
 
   async function saveChanges() {
     if (!current) return
     setBusy('update')
-    const result = await updateEvent(current.id, draft, { churchId, role })
+    const cover = await resolveCoverUrl()
+    if (cover.error) {
+      setBusy(null)
+      setCoverError(cover.error)
+      return
+    }
+    const result = await updateEvent(current.id, buildDraft(cover.url), { churchId, role })
     setBusy(null)
     if (!result.ok) {
       setNotice({ tone: 'error', text: result.error })
       return
     }
+    dropReplacedCover(result.event.cover_url ?? null)
+    setCoverFile(null)
+    setCoverError(null)
     setCurrent(result.event)
+    setForm((f) => ({ ...f, coverUrl: result.event.cover_url ?? '' }))
     setNotice({ tone: 'ok', text: 'Alterações salvas.' })
   }
 
@@ -294,16 +339,23 @@ function EventForm({ event }: { event?: ChurchEvent }) {
           <Card>
             <CardHeader title="Mídia" subtitle="Capa e vídeo promocional." />
             <CardBody className="space-y-4">
-              <div className="flex items-center justify-between rounded-lg border border-dashed border-line bg-surface px-4 py-5">
-                <div>
-                  <p className="text-sm font-medium text-navy">Imagem de capa</p>
-                  <p className="text-xs text-slate-400">1200×630 recomendado · o envio para o Storage ainda não está ligado</p>
-                </div>
-                <Button variant="outline" size="sm" disabled icon={<Upload className="h-4 w-4" />}>Enviar</Button>
+              <div>
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">Imagem de capa</p>
+                <MediaField
+                  kind="event-cover"
+                  currentUrl={coverFile ? null : form.coverUrl || null}
+                  pendingFile={coverFile}
+                  busy={busy !== null}
+                  error={coverError}
+                  className="h-44"
+                  onPick={(file) => {
+                    setCoverError(null)
+                    setCoverFile(file)
+                    if (!file) set('coverUrl', '')
+                  }}
+                />
+                <p className="mt-1 text-xs text-slate-400">1200×630 recomendado. A capa entra em vigor quando o evento for salvo.</p>
               </div>
-              <Field label="URL da capa" hint="Cole o endereço de uma imagem http(s) já hospedada.">
-                <Input value={form.coverUrl} onChange={(e) => set('coverUrl', e.target.value)} placeholder="https://..." />
-              </Field>
               <Field label="Vídeo (YouTube/Vimeo)" hint="Sem coluna na tabela de eventos ainda: não é gravado.">
                 <Input disabled placeholder="https://..." />
               </Field>

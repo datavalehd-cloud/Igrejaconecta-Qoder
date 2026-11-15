@@ -1,4 +1,5 @@
 import { supabase } from '@/services/supabase/client'
+import { isOwnStorageImageUrl } from '@/services/data/mediaService'
 import { slugify } from '@/utils/format'
 import { validateLatLng } from '@/utils/geo'
 import { can } from '@/utils/rbac'
@@ -276,6 +277,14 @@ interface NormalizedDraft {
   longitude: number | null
 }
 
+/**
+ * A capa só vem do Storage desta igreja. URL de texto livre deixava o navegador
+ * de cada visitante pedir imagem a um terceiro escolhido por quem cadastrou o
+ * evento — IP e user-agent vazando junto. O upload (M4) é o único caminho.
+ */
+export const EVENT_COVER_NOT_OURS =
+  'A imagem de capa precisa ser um arquivo enviado aqui pelo aplicativo: URL de outro site não é aceita.'
+
 export function validateEventDraft(draft: EventDraft): string | null {
   if (draft.name.trim().length < 3) return 'Informe o nome do evento (pelo menos 3 caracteres).'
   if (!draft.category_id) return 'Escolha a categoria do evento.'
@@ -292,8 +301,8 @@ export function validateEventDraft(draft: EventDraft): string | null {
       return 'A capacidade precisa ser um número inteiro maior que zero — deixe em branco para não ter limite.'
     }
   }
-  if (draft.cover_url && !/^https?:\/\//i.test(draft.cover_url)) {
-    return 'A imagem de capa precisa ser uma URL http(s).'
+  if (draft.cover_url && !isOwnStorageImageUrl(draft.cover_url)) {
+    return EVENT_COVER_NOT_OURS
   }
   const coords = validateLatLng(draft.latitude ?? null, draft.longitude ?? null)
   if (coords) return coords

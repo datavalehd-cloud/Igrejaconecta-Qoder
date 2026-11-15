@@ -209,6 +209,7 @@ export function EventDetailPage() {
 
       <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-sm">
         <div className="relative flex h-56 items-end bg-gradient-to-br from-navy to-brand-600 p-6 sm:h-72">
+          {event.cover_url && <CoverBackdrop url={event.cover_url} alt={event.name} />}
           <div className="absolute inset-0 opacity-10 [background-image:radial-gradient(circle_at_20%_20%,white_1px,transparent_1px)] [background-size:18px_18px]" />
           <div className="relative">
             <Badge tone="brand" className="bg-white/20 text-white border-white/30">{event.category}</Badge>
@@ -347,5 +348,23 @@ function EventShare({ url, title, text }: { url: string; title: string; text: st
       </div>
       {feedback && <p className="mt-1.5 text-xs text-slate-500">{feedback}</p>}
     </div>
+  )
+}
+
+/**
+ * Capa vinda do Storage. Se o objeto não carregar (removido, bucket trocado), o
+ * gradiente continua no lugar — melhor sem imagem do que imagem quebrada.
+ */
+function CoverBackdrop({ url, alt }: { url: string; alt: string }) {
+  const [broken, setBroken] = useState(false)
+  if (broken) return null
+  return (
+    <img
+      src={url}
+      alt={`Capa do evento ${alt}`}
+      loading="lazy"
+      onError={() => setBroken(true)}
+      className="absolute inset-0 h-full w-full object-cover"
+    />
   )
 }

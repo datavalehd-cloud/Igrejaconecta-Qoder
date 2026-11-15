@@ -1,4 +1,5 @@
 import { supabase } from '@/services/supabase/client'
+import { isOwnStorageImageUrl } from '@/services/data/mediaService'
 import { validateLatLng } from '@/utils/geo'
 import { can } from '@/utils/rbac'
 import type { Church, RoleKey } from '@/types'
@@ -22,9 +23,8 @@ import type { Church, RoleKey } from '@/types'
 /**
  * O que a tela lê. Dois grupos ficam de fora:
  * - `created_by`: nenhum formulário precisa do uuid de quem cadastrou a igreja;
- * - `logo_url`/`cover_url`: existem na tabela, mas **nenhuma tela do app mostra**
- *   a logo ou a capa da igreja — enquanto não houver upload e exibição no Storage
- *   (passo M4), oferecer o campo seria gravar algo que ninguém renderiza.
+ * - `logo_url`/`cover_url`: têm caminho próprio (`CHURCH_MEDIA_COLUMNS`, abaixo) —
+ *   o formulário de cadastro continua sem poder tocar nas duas.
  */
 export const CHURCH_PROFILE_COLUMNS = [
   'id',
@@ -212,4 +212,67 @@ function describeProfileDbError(error: { code?: string; message: string }): stri
     default:
       return error.message
   }
+}
+
+/**
+ * Mídia da igreja (M4). Caminho separado do patch de cadastro de propósito:
+ * `logo_url` e `cover_url` só entram por aqui, e só com URL que o `mediaService`
+ * produziu no Storage desta igreja. Assim o formulário de texto não consegue
+ * gravar endereço de terceiro — que faria o navegador de cada visitante pedir
+ * imagem a um host escolhido por quem edita o cadastro.
+ */
+export const CHURCH_MEDIA_COLUMNS = ['id', 'logo_url', 'cover_url'] as const satisfies readonly (keyof Church)[]
+
+export interface ChurchMedia {
+  id: string
+  logo_url: string | null
+  cover_url: string | null
+}
+
+export const CHURCH_MEDIA_NOT_OURS =
+  'A imagem precisa ter sido enviada aqui pelo aplicativo: URL de outro site não é aceita.'
+
+export type ChurchMediaResult =
+  | { ok: true; media: ChurchMedia; error?: never }
+  | { ok: false; error: string; media?: never }
+
+export async function fetchChurchMedia(churchId?: string): Promise<ChurchMedia | null> {
+  if (!churchId) return null
+  const { data, error } = await supabase
+    .from('churches')
+    .select(CHURCH_MEDIA_COLUMNS.join(','))
+    .eq('id', churchId)
+    .maybeSingle()
+  if (error) throw new Error(error.message)
+  return (data ?? null) as unknown as ChurchMedia | null
+}
+
+/** `null` é estado válido: significa "sem imagem", e a tela volta ao gradiente. */
+export function validateChurchMedia(media: { logo_url: string | null; cover_url: string | null }): string | null {
+  for (const url of [media.logo_url, media.cover_url]) {
+    if (url && !isOwnStorageImageUrl(url)) return CHURCH_MEDIA_NOT_OURS
+  }
+  return null
+}
+
+export async function updateChurchMedia(
+  media: { logo_url: string | null; cover_url: string | null },
+  actor: ChurchProfileActor,
+): Promise<ChurchMediaResult> {
+  const denied = gateWrite(actor)
+  if (denied) return { ok: false, error: denied }
+  const churchId = actor.churchId
+  if (!churchId) return { ok: false, error: CHURCH_PROFILE_NO_CHURCH }
+  const invalid = validateChurchMedia(media)
+  if (invalid) return { ok: false, error: invalid }
+
+  const { data, error } = await supabase
+    .from('churches')
+    .update({ logo_url: media.logo_url, cover_url: media.cover_url })
+    .eq('id', churchId)
+    .select(CHURCH_MEDIA_COLUMNS.join(','))
+    .maybeSingle()
+  if (error) return { ok: false, error: describeProfileDbError(error) }
+  if (!data) return { ok: false, error: CHURCH_PROFILE_NOT_FOUND }
+  return { ok: true, media: data as unknown as ChurchMedia }
 }

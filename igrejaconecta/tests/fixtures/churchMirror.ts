@@ -1,4 +1,4 @@
-import { auditLogs, churches, members } from '@/data/mock'
+import { auditLogs, churches, members } from './mock'
 import { approvalAuditAction } from '@/services/data/auditService'
 import { APPROVAL_COLUMNS } from '@/services/data/churchApprovalService'
 import {

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { events } from '@/data/mock'
+import { events } from '../fixtures/mock'
 import { formatDateTime } from '@/utils/format'
 import { CAMPAIGN_NETWORKS, validateCampaignDraft } from '@/services/data/marketingService'
 import {

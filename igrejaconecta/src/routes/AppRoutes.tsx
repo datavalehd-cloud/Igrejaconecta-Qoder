@@ -42,7 +42,7 @@ import { AdminOrganizationsPage } from '@/pages/admin/AdminOrganizationsPage'
 import { AdminIntegrationsPage } from '@/pages/admin/AdminIntegrationsPage'
 import { AuditLogsPage, SystemLogsPage } from '@/pages/admin/AdminLogsPage'
 import { AdminReportsPage } from '@/pages/admin/AdminReportsPage'
-import { AdminSupportPage } from '@/pages/admin/AdminSupportPage'
+import { SupportCenterPage } from '@/pages/admin/AdminSupportPage'
 import { AdminSettingsPage } from '@/pages/admin/AdminSettingsPage'
 
 import { NotFoundPage, AccessDeniedPage } from '@/pages/ErrorPages'
@@ -99,6 +99,7 @@ export function AppRoutes() {
         <Route path="redes" element={<ProtectedRoute permission="marketing.manage"><SocialAccountsPage /></ProtectedRoute>} />
         <Route path="ia" element={<ProtectedRoute permission="ai.use"><AIAssistantPage /></ProtectedRoute>} />
         <Route path="automacoes" element={<ProtectedRoute permission="automation.manage"><AutomationPage /></ProtectedRoute>} />
+        <Route path="suporte" element={<SupportCenterPage />} />
       </Route>
 
       {/* Painel SuperAdmin */}
@@ -118,7 +119,7 @@ export function AppRoutes() {
         <Route path="logs" element={<SystemLogsPage />} />
         <Route path="auditoria" element={<AuditLogsPage />} />
         <Route path="relatorios" element={<AdminReportsPage />} />
-        <Route path="suporte" element={<AdminSupportPage />} />
+        <Route path="suporte" element={<SupportCenterPage />} />
         <Route path="configuracoes" element={<AdminSettingsPage />} />
       </Route>
 

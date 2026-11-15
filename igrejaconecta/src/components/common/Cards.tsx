@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { CalendarDays, MapPin, Church as ChurchIcon, BadgeCheck } from 'lucide-react'
 import type { Church, PublicEvent } from '@/types'
@@ -21,13 +22,37 @@ function CoverGradient({ seed, label }: { seed: string; label?: string }) {
   )
 }
 
+/**
+ * Capa do evento (M4). A imagem só entra quando o banco devolveu `cover_url`; se o
+ * arquivo sumiu do Storage o `onError` volta ao gradiente — ícone quebrado na tela
+ * do visitante pareceria dado inventado.
+ */
+function EventCover({ event }: { event: PublicEvent }) {
+  const [broken, setBroken] = useState(false)
+  if (!event.cover_url || broken) return <CoverGradient seed={event.id} label={event.category} />
+  return (
+    <div className="relative h-40 bg-navy">
+      <img
+        src={event.cover_url}
+        alt=""
+        loading="lazy"
+        className="h-full w-full object-cover"
+        onError={() => setBroken(true)}
+      />
+      {event.category && (
+        <span className="absolute bottom-3 left-4 text-sm font-semibold text-white drop-shadow-md">{event.category}</span>
+      )}
+    </div>
+  )
+}
+
 export function EventCard({ event }: { event: PublicEvent }) {
   return (
     <Link
       to={`/eventos/${event.slug}`}
       className="group flex flex-col overflow-hidden rounded-xl border border-line bg-white shadow-sm transition hover:shadow-md"
     >
-      <CoverGradient seed={event.id} label={event.category} />
+      <EventCover event={event} />
       <div className="flex flex-1 flex-col p-4">
         <div className="mb-2 flex items-center gap-2">
           <Badge tone="brand"><CalendarDays className="h-3 w-3" />{formatDate(event.starts_at)}</Badge>

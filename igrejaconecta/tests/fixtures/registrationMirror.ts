@@ -1,4 +1,4 @@
-import { events, registrations } from '@/data/mock'
+import { events, registrations } from './mock'
 import {
   CANCEL_MESSAGES,
   CHECK_IN_MESSAGES,

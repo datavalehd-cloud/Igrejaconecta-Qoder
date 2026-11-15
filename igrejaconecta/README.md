@@ -2554,3 +2554,23 @@ restrito a `src/services/supabase/client.ts` com a anon key, e nenhuma credencia
     hoje é site-level). Nada disso é fingido como existente.
 11. Rotação da chave `sb_secret_` antiga no painel do Supabase (ela nunca foi ao frontend nem ao
     Vercel, mas vale trocar por higiene).
+
+## Rodada M4/M5/M3e (2026-11-14)
+
+- **M4 — mídia real no Storage.** `mediaService` envia jpeg/png/webp para os buckets
+  públicos (`church-logos`, `church-covers`) com caminho `<churchId>/<uuid>.<ext>` e só
+  grava no banco a URL que o provedor confirmou (`isOwnStorageImageUrl`). Capa de evento
+  sobe no salvar; logo/capa da igreja têm editor próprio. A migração **0022** criou o DELETE
+  da pasta da própria igreja (provado por mutação no caso D5 da suíte) e foi aplicada no
+  projeto real pelo SQL Editor.
+- **M5 — SuperAdmin de verdade.** Suporte (0018) virou central de chamados em
+  `/app/suporte` e `/admin/suporte`, com conversa, resposta, fechar e reabrir — audiência
+  recortada pela view `support_ticket_list`. "Logs do sistema" lê `security_event_log`
+  (0019) e "Configurações" mostra `security_event_summary`; recusas de escrita (42501) e de
+  upload pela policy alimentam `log_security_event`. "Exportar PDF" gera o relatório pelo
+  diálogo de impressão do navegador, com os mesmos números da tela. Organizações continuam
+  honestas: não existe tabela.
+- **M3e — mock fora do bundle.** `src/data/mock.ts` virou `tests/fixtures/mock.ts`; a cerca
+  estrutural agora exige que o arquivo more em `tests/fixtures/` e que nada em `src/` o importe.
+- Verificação: `tsc -b`, 655 testes unitários, lint sem erros, `npm run test:rls` verde
+  (mutação da 0022 derruba o caso D5) e build de produção com portão de segredos limpo.

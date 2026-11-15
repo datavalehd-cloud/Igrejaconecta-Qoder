@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { categories, churches, events, registrations } from '@/data/mock'
+import { categories, churches, events, registrations } from '../fixtures/mock'
 import { DIRECTORY_COLUMNS } from '@/services/data/churchService'
 import {
   EVENT_BRANCH_MISMATCH,
@@ -15,6 +15,7 @@ import {
   EVENT_PUBLISH_DENIED,
   EVENTS_MANAGED_COLUMNS,
   EVENTS_MANAGED_SELECT,
+  EVENT_COVER_NOT_OURS,
   EVENTS_PUBLIC_COLUMNS,
   EVENTS_PUBLIC_SELECT,
   createEvent,
@@ -52,7 +53,10 @@ import type { ChurchEvent } from '@/types'
  *     e em nenhuma tabela, então não podem aparecer em projeção nem em linha.
  */
 
-const backend = vi.hoisted(() => ({ supabase: null as { from: ReturnType<typeof vi.fn> } | null }))
+const backend = vi.hoisted(() => ({
+  supabase: null as { from: ReturnType<typeof vi.fn> } | null,
+  supabaseOrigin: 'https://teste.supabase.co',
+}))
 vi.mock('@/services/supabase/client', () => backend)
 
 const chain = { select: vi.fn(), eq: vi.fn(), order: vi.fn(), insert: vi.fn(), update: vi.fn(), maybeSingle: vi.fn() }
@@ -624,7 +628,9 @@ describe('validação — o que não chega ao banco', () => {
     ['fim igual ao início', validDraft({ ends_at: '2026-12-05T22:00:00.000Z' }), 'A data final precisa ser depois do início.'],
     ['capacidade zero', validDraft({ capacity: 0 }), 'A capacidade precisa ser um número inteiro maior que zero — deixe em branco para não ter limite.'],
     ['capacidade quebrada', validDraft({ capacity: 12.5 }), 'A capacidade precisa ser um número inteiro maior que zero — deixe em branco para não ter limite.'],
-    ['capa fora de http(s)', validDraft({ cover_url: 'javascript:alert(1)' }), 'A imagem de capa precisa ser uma URL http(s).'],
+    ['capa que não é http(s)', validDraft({ cover_url: 'javascript:alert(1)' }), EVENT_COVER_NOT_OURS],
+    ['capa de outro site', validDraft({ cover_url: 'https://cdn.exemplo.com/capa.png' }), EVENT_COVER_NOT_OURS],
+    ['capa de bucket privado', validDraft({ cover_url: 'https://teste.supabase.co/storage/v1/object/public/church-documents/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222.jpg' }), EVENT_COVER_NOT_OURS],
     ['latitude fora do intervalo', validDraft({ latitude: 91, longitude: -45.9 }), 'A latitude precisa ser um número entre -90 e 90.'],
     ['longitude fora do intervalo', validDraft({ latitude: -23.2, longitude: 181 }), 'A longitude precisa ser um número entre -180 e 180.'],
     ['só um lado da coordenada', validDraft({ latitude: -23.2, longitude: null }), 'Informe latitude e longitude juntas, ou deixe as duas em branco.'],

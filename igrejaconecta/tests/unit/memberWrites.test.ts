@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { members } from '@/data/mock'
+import { members } from '../fixtures/mock'
 import {
   MEMBER_MANAGE_DENIED,
   SUPERADMIN_NOT_ASSIGNABLE,

@@ -1,4 +1,4 @@
-import { campaigns, members } from '@/data/mock'
+import { campaigns, members } from './mock'
 import {
   CAMPAIGN_COLUMNS,
   CAMPAIGN_MANAGE_DENIED,

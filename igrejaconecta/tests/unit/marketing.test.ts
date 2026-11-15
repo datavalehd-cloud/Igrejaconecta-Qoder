@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { campaigns, members } from '@/data/mock'
+import { campaigns, members } from '../fixtures/mock'
 import * as marketingService from '@/services/data/marketingService'
 import {
   CAMPAIGN_COLUMNS,

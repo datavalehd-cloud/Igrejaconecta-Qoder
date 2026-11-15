@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
-import { members, ministries, ministryMembers } from '@/data/mock'
+import { members, ministries, ministryMembers } from '../fixtures/mock'
 import * as ministryService from '@/services/data/ministryService'
 import {
   MINISTRY_COLUMNS,

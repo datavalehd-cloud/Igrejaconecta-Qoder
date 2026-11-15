@@ -1,14 +1,16 @@
-import { ShieldCheck, Database, Bell, Lock } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ShieldCheck, Database, Bell, Lock, Loader2 } from 'lucide-react'
 import { PageHeader, Card, CardHeader, CardBody, Field, Input, Select, Badge } from '@/components/common/primitives'
 import { supabaseHost } from '@/services/supabase/client'
+import { fetchSecuritySummary, SECURITY_EVENT_LABEL, type SecuritySummaryRow } from '@/services/data/securityService'
 
 /**
  * O cartão Segurança mostra o que o banco e o código aplicam de fato: RLS ligado
  * em todas as tabelas, MFA obrigatório para superadmin/church_admin e nenhuma
- * service_role no frontend. "Alertas de tentativas suspeitas" não existe — não há
- * monitoramento ativo — e aparece como não conectado. Plataforma e LGPD não têm
- * tabela de configuração nesta versão, então os campos ficam somente leitura e não
- * há botão de salvar (que só mentiria dizendo que gravou).
+ * service_role no frontend. Os alertas (M5) vêm da view `security_event_summary`
+ * da 0019 — contagem real de escrita recusada e de publicação sem confirmação.
+ * Plataforma e LGPD não têm tabela de configuração nesta versão, então os campos
+ * ficam somente leitura e não há botão de salvar (que só mentiria dizendo que gravou).
  */
 export function AdminSettingsPage() {
   return (
@@ -34,7 +36,7 @@ export function AdminSettingsPage() {
             <Row icon={<ShieldCheck className="h-4 w-4 text-green-600" />} label="RLS (Row Level Security)"><Badge tone="green">Ativado</Badge></Row>
             <Row icon={<ShieldCheck className="h-4 w-4 text-green-600" />} label="MFA para administradores"><Badge tone="green">Obrigatório</Badge></Row>
             <Row icon={<ShieldCheck className="h-4 w-4 text-brand-600" />} label="service_role no frontend"><Badge tone="red">Bloqueado</Badge></Row>
-            <Row icon={<Bell className="h-4 w-4 text-slate-400" />} label="Alertas de tentativas suspeitas"><Badge tone="neutral">Não conectado</Badge></Row>
+            <Row icon={<Bell className="h-4 w-4 text-slate-400" />} label="Alertas de tentativas suspeitas"><SecurityAlerts /></Row>
             <Row icon={<Database className="h-4 w-4 text-brand-600" />} label="Backend de dados (Supabase)"><Badge tone="green">{supabaseHost}</Badge></Row>
           </CardBody>
         </Card>
@@ -64,5 +66,32 @@ function Row({ icon, label, children }: { icon: React.ReactNode; label: string; 
       <span className="inline-flex items-center gap-2 text-slate-600">{icon}{label}</span>
       {children}
     </div>
+  )
+}
+
+/**
+ * Contagens da 0019. Sem linha na view não há número: o cartão mostra zero só
+ * quando o banco respondeu com zero, e mostra falha quando a consulta falha.
+ */
+function SecurityAlerts() {
+  const [rows, setRows] = useState<SecuritySummaryRow[] | null>(null)
+  const [failure, setFailure] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    fetchSecuritySummary()
+      .then((data) => { if (alive) { setRows(data); setFailure(false) } })
+      .catch(() => { if (alive) { setRows(null); setFailure(true) } })
+    return () => { alive = false }
+  }, [])
+
+  if (failure) return <Badge tone="red">Consulta falhou</Badge>
+  if (!rows) return <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+  const hot = rows.filter((r) => r.last_24h > 0)
+  return (
+    <span className="text-right text-xs text-slate-500">
+      {rows.map((r) => `${SECURITY_EVENT_LABEL[r.kind]}: ${r.last_24h} em 24h / ${r.total} no total`).join(' · ')}
+      {hot.length === 0 && ' — nada nas últimas 24h'}
+    </span>
   )
 }

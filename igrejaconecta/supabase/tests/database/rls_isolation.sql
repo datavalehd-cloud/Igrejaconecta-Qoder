@@ -67,6 +67,10 @@ select set_config('app.base_churches_queue', (select count(*) from public.church
 select set_config('app.base_members',        (select count(*) from public.church_members)::text, false);
 select set_config('app.base_profiles',       (select count(*) from public.profiles)::text, false);
 select set_config('app.base_audit',          (select count(*) from public.audit_logs)::text, false);
+-- Objetos públicos do Storage: num projeto em uso a igreja já subiu logo e capa
+-- de verdade (M4), e o D1 conta o que `anon` vê no bucket público — sem a base,
+-- o primeiro upload real faria a suíte reclamar de imagem que ela não criou.
+select set_config('app.base_storage_public', (select count(*) from storage.objects where bucket_id in ('church-logos','church-covers'))::text, false);
 reset role;
 
 -- ============================================================================
@@ -722,13 +726,15 @@ savepoint d1;
 set local role anon;
 select set_config('request.jwt.claims', '{"role":"anon","sub":null}', true);
 do $$
-declare n int; priv int;
+declare n int; priv int; base int;
 begin
   if to_regclass('storage.objects') is null then return; end if;
+  base := current_setting('app.base_storage_public')::int;
   select count(*) into n from storage.objects;
   select count(*) into priv from storage.objects where bucket_id in ('church-documents','church-gallery');
-  if n <> 2 or priv <> 0 then
-    raise exception 'RLS-FALHA D1: anon leu % objetos (privados: %); deveria ver 2 publicos e 0 privados', n, priv;
+  if n <> base + 2 or priv <> 0 then
+    raise exception 'RLS-FALHA D1: anon leu % objetos (privados: %); deveria ver os 2 publicos de fixture somados aos % que ja existiam, e nenhum privado',
+      n, priv, base;
   end if;
 end $$;
 rollback to savepoint d1;
@@ -766,6 +772,108 @@ begin
   if n <> 1 then raise exception 'RLS-FALHA D3: upload na propria igreja falhou'; end if;
 end $$;
 rollback to savepoint d3;
+
+-- D4..D8 medem a 0022 (`members_delete_public_media`), que existe para a tela
+-- poder trocar e remover imagem sem deixar arquivo público órfão. DELETE não
+-- levanta `insufficient_privilege` quando a política não casa: apaga 0 linhas.
+-- O bloco `exception` só cobre o caso de o papel nem ter grant de DELETE — que
+-- também é "não apagou", e não deve ser lido como falha da política.
+
+savepoint d4;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int;
+begin
+  if to_regclass('storage.objects') is null then return; end if;
+  begin
+    delete from storage.objects
+    where bucket_id = 'church-covers' and name = current_setting('app.church_a') || '/capa.jpg';
+    get diagnostics n = row_count;
+    if n <> 1 then raise exception 'RLS-FALHA D4: a1 nao apagou a capa da propria igreja (% linhas; trocar de imagem deixaria orfao publico)', n; end if;
+  exception when insufficient_privilege then
+    raise exception 'RLS-FALHA D4: a1 nao tem grant de DELETE em storage.objects';
+  end;
+end $$;
+rollback to savepoint d4;
+
+savepoint d5;
+-- O objeto da igreja B entra como dono da conexão: nenhuma política de INSERT
+-- vale para ele, e o que D5 mede é o DELETE de a1 sobre pasta alheia.
+insert into storage.objects (bucket_id, name, owner) values
+  ('church-covers', current_setting('app.church_b') || '/capa.jpg', current_setting('app.user_b1')::uuid);
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int;
+begin
+  if to_regclass('storage.objects') is null then return; end if;
+  begin
+    delete from storage.objects
+    where bucket_id = 'church-covers' and name = current_setting('app.church_b') || '/capa.jpg';
+    get diagnostics n = row_count;
+    if n <> 0 then raise exception 'RLS-FALHA D5: a1 apagou a capa da igreja B (% linhas)', n; end if;
+  exception when insufficient_privilege then
+    raise exception 'RLS-FALHA D5: a1 nao tem grant de DELETE em storage.objects';
+  end;
+end $$;
+rollback to savepoint d5;
+
+savepoint d6;
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon","sub":null}', true);
+do $$
+declare n int;
+begin
+  if to_regclass('storage.objects') is null then return; end if;
+  begin
+    delete from storage.objects where bucket_id in ('church-logos','church-covers');
+    get diagnostics n = row_count;
+    if n <> 0 then raise exception 'RLS-FALHA D6: anon apagou % imagens publicas', n; end if;
+  exception when insufficient_privilege then
+    null;  -- sem grant de DELETE para anon: também é "não apagou"
+  end;
+end $$;
+rollback to savepoint d6;
+
+savepoint d7;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int;
+begin
+  if to_regclass('storage.objects') is null then return; end if;
+  begin
+    delete from storage.objects
+    where bucket_id in ('church-documents','church-gallery')
+      and split_part(name, '/', 1) = current_setting('app.church_a');
+    get diagnostics n = row_count;
+    if n <> 0 then raise exception 'RLS-FALHA D7: a1 apagou % arquivos de bucket privado (ata/galeria nao sao imagem institucional)', n; end if;
+  exception when insufficient_privilege then
+    raise exception 'RLS-FALHA D7: a1 nao tem grant de DELETE em storage.objects';
+  end;
+end $$;
+rollback to savepoint d7;
+
+savepoint d8;
+insert into storage.objects (bucket_id, name, owner) values
+  ('church-covers', current_setting('app.church_b') || '/capa-su.jpg', current_setting('app.user_b1')::uuid);
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_su'))::text, true);
+do $$
+declare n int;
+begin
+  if to_regclass('storage.objects') is null then return; end if;
+  begin
+    delete from storage.objects
+    where bucket_id = 'church-covers' and name = current_setting('app.church_b') || '/capa-su.jpg';
+    get diagnostics n = row_count;
+    if n <> 1 then raise exception 'RLS-FALHA D8: SuperAdmin nao limpou imagem de outra igreja (% linhas; o ramo is_superadmin() da 0022 nao vale)', n; end if;
+  exception when insufficient_privilege then
+    raise exception 'RLS-FALHA D8: SuperAdmin nao tem grant de DELETE em storage.objects';
+  end;
+end $$;
+rollback to savepoint d8;
 
 -- ---------------------------------------------------------------------------
 -- GRUPO E — guardas estruturais (pegam tabela nova sem RLS no futuro)

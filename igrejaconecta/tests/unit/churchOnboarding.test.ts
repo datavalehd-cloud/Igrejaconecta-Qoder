@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it } from 'vitest'
-import { churches, members } from '@/data/mock'
+import { churches, members } from '../fixtures/mock'
 import {
   CHURCH_CREATE_INVALID_NAME,
   CHURCH_CREATE_NO_ACTOR,

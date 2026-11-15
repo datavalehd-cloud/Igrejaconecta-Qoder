@@ -57,16 +57,17 @@ describe('nenhum caminho demo sobrou dentro do aplicativo', () => {
   })
 
   // Era uma allowlist que só encolhia (passos M3b..M3d): as páginas ainda presas na
-  // loja de mocks estavam listadas aqui, e nenhuma podia entrar. Zerou no M3d,
-  // então a cerca virou proibição seca — um `import` novo de `@/data/mock` no
-  // aplicativo quebra este teste. O arquivo existe (M3e é só movê-lo para
-  // `tests/fixtures/`), mas nada dentro de `src/` o alcança.
-  it('nenhum arquivo do aplicativo importa a loja de mocks', () => {
+  // loja de mocks estavam listadas aqui, e nenhuma podia entrar. Zerou no M3d.
+  // No M3e o arquivo saiu de `src/` de vez: hoje ele é fixture de teste em
+  // `tests/fixtures/mock.ts`, e qualquer import dele dentro do aplicativo quebra.
+  it('a loja de mocks é fixture de teste: nenhum arquivo do aplicativo a alcança', () => {
     const readers = sources()
-      .filter(({ text }) => /from '@\/data\/mock'/.test(text))
+      .filter(({ text }) => /from '@\/data\/mock'|from '\.\.\/fixtures\/mock'|from '\.\/mock'/.test(text))
       .map(({ path }) => path)
       .sort()
     expect(readers).toEqual([])
+    expect(sources().some(({ path }) => path.endsWith('data/mock.ts'))).toBe(false)
+    expect(readdirSync(join(root, 'tests', 'fixtures'))).toContain('mock.ts')
   })
 
   it('nenhum serviço tem ramo condicional em torno do Supabase', () => {

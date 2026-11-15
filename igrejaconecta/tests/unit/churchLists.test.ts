@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { churches } from '@/data/mock'
+import { churches } from '../fixtures/mock'
 import { DIRECTORY_COLUMNS, MANAGED_COLUMNS, MAP_COLUMNS } from '@/services/data/churchService'
 import {
   demoDirectoryChurches,

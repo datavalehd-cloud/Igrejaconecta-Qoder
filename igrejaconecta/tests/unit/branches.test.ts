@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { branches, members } from '@/data/mock'
+import { branches, members } from '../fixtures/mock'
 import * as branchService from '@/services/data/branchService'
 import {
   BRANCH_COLUMNS,

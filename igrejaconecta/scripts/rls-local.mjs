@@ -57,6 +57,7 @@ const SETUP = [
   'supabase/migrations/0019_security_events.sql',
   'supabase/migrations/0020_drop_tiktok_from_campaigns.sql',
   'supabase/migrations/0021_ministry_membership_guard.sql',
+  'supabase/migrations/0022_storage_media_delete.sql',
   'supabase/seed.sql',
 ]
 const SUITES = ['supabase/tests/database/rls_isolation.sql']

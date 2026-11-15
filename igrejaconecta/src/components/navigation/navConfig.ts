@@ -20,6 +20,7 @@ export const churchNav: NavGroup[] = [
     title: 'Geral',
     items: [
       { label: 'Visão geral', to: '/app', icon: LayoutDashboard },
+      { label: 'Suporte', to: '/app/suporte', icon: LifeBuoy },
     ],
   },
   {

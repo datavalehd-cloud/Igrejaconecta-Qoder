@@ -1,4 +1,4 @@
-import { members } from '@/data/mock'
+import { members } from './mock'
 import {
   SOCIAL_CONNECT_LOCKED,
   SOCIAL_DUPLICATE,

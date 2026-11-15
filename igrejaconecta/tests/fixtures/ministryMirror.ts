@@ -1,4 +1,4 @@
-import { members, ministries, ministryMembers, profiles } from '@/data/mock'
+import { members, ministries, ministryMembers, profiles } from './mock'
 import {
   MINISTRY_LEADER_OUTSIDE,
   MINISTRY_MANAGE_DENIED,

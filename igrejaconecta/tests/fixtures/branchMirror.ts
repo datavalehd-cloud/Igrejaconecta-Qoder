@@ -1,4 +1,4 @@
-import { branches, members } from '@/data/mock'
+import { branches, members } from './mock'
 import {
   BRANCH_COLUMNS,
   BRANCH_MANAGE_DENIED,

@@ -1,4 +1,4 @@
-import { churches, members } from '@/data/mock'
+import { churches, members } from './mock'
 import {
   MEMBER_MANAGE_DENIED,
   SUPERADMIN_NOT_ASSIGNABLE,

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   CHURCH_EDITABLE_COLUMNS,
   CHURCH_LOCKED_COLUMNS,
+  CHURCH_MEDIA_COLUMNS,
   CHURCH_PROFILE_COLUMNS,
   CHURCH_PROFILE_MANAGE_DENIED,
   CHURCH_PROFILE_NAME_REQUIRED,
@@ -40,7 +41,10 @@ import { can } from '@/utils/rbac'
  * e C18. Aqui fica o que o SQL não vê: nenhuma chave travada no payload.
  */
 
-const backend = vi.hoisted(() => ({ supabase: null as { from: ReturnType<typeof vi.fn> } | null }))
+const backend = vi.hoisted(() => ({
+  supabase: null as { from: ReturnType<typeof vi.fn> } | null,
+  supabaseOrigin: 'https://teste.supabase.co',
+}))
 vi.mock('@/services/supabase/client', () => backend)
 
 let result: { data: unknown; error: unknown } = { data: null, error: null }
@@ -110,11 +114,15 @@ describe('igreja — projeção e o que a tabela tem', () => {
     }
   })
 
-  it('editáveis + travadas cobrem a tabela inteira, menos as duas de arquivo', () => {
+  it('editáveis + travadas + mídia cobrem a tabela inteira', () => {
     // A régua é de conjunto: se alguém adicionar coluna na tabela sem dizer o que
     // a tela faz com ela, isto aqui quebra em vez de deixar a coluna solta.
-    const handled = new Set<string>([...CHURCH_EDITABLE_COLUMNS, ...CHURCH_LOCKED_COLUMNS])
-    expect(ddlColumns(churchesDdl).filter((c) => !handled.has(c))).toEqual(['logo_url', 'cover_url'])
+    const handled = new Set<string>([
+      ...CHURCH_EDITABLE_COLUMNS,
+      ...CHURCH_LOCKED_COLUMNS,
+      ...CHURCH_MEDIA_COLUMNS,
+    ])
+    expect(ddlColumns(churchesDdl).filter((c) => !handled.has(c))).toEqual([])
   })
 
   it('nenhuma coluna aparece nas duas listas ao mesmo tempo', () => {
@@ -122,11 +130,14 @@ describe('igreja — projeção e o que a tabela tem', () => {
     expect(overlap).toEqual([])
   })
 
-  it('a tela não oferece logo nem capa: as duas também não estão na projeção', () => {
-    // Não há upload (M4) e nenhuma tela renderiza a imagem. Mandar o campo em
-    // branco apagaria o que o banco tivesse.
+  it('logo e capa têm caminho próprio: fora da projeção de cadastro e do patch', () => {
+    // O formulário de texto não toca nas duas — só `updateChurchMedia`, que exige
+    // URL produzida pelo upload no Storage desta igreja.
     expect(CHURCH_PROFILE_COLUMNS).not.toContain('logo_url' as never)
     expect(CHURCH_PROFILE_COLUMNS).not.toContain('cover_url' as never)
+    expect([...CHURCH_MEDIA_COLUMNS]).toEqual(['id', 'logo_url', 'cover_url'])
+    expect(Object.keys(buildChurchPatch(draft()))).not.toContain('logo_url')
+    expect(Object.keys(buildChurchPatch(draft()))).not.toContain('cover_url')
   })
 })
 
