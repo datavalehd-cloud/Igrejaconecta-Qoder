@@ -86,7 +86,7 @@ export function RegistrationsPage() {
     const header = ['Nome', 'E-mail', 'Telefone', 'Evento', 'Código', 'Status', 'Inscrição', 'Check-in']
     const lines = filtered.map((r) => [
       r.visitor_name,
-      r.visitor_email,
+      r.visitor_email ?? '',
       r.visitor_phone ?? '',
       r.event_name ?? '',
       r.ticket_code ?? '',
@@ -112,7 +112,7 @@ export function RegistrationsPage() {
       cell: (r) => (
         <div>
           <p className="font-medium text-navy">{r.visitor_name}</p>
-          <p className="text-xs text-slate-500">{r.visitor_email}</p>
+          <p className="text-xs text-slate-500">{r.visitor_email ?? '—'}</p>
         </div>
       ),
     },

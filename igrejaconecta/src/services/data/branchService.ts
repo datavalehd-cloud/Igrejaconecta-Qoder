@@ -5,10 +5,12 @@ import type { ChurchBranch, RoleKey } from '@/types'
 
 /**
  * Filiais (0013, Fase 4). Leitura para membro **ativo** da própria igreja e para
- * o SuperAdmin; escrita só com `church.manage`. Não existe delete em camada
- * nenhuma: a tabela não tem política nem grant de delete (casos O7 e O10 da
- * suíte), então o serviço não expõe a operação. Se um dia a tela oferecer
- * "excluir filial", banco e serviço têm de ser abertos juntos, de propósito.
+ * o SuperAdmin; escrita e exclusão só com `church.manage`. O delete nasceu
+ * fechado (decisão 3 da 0013) e foi aberto de propósito pela 0025 — grant +
+ * política `church.manage`, as duas camadas, com caso na suíte (grupo O).
+ * Excluir filial **não apaga nada junto**: `events.branch_id` (0013) e
+ * `church_service_times.branch_id` (0023) são `on delete set null`, e os casos
+ * O11/O12 medem isso.
  *
  * Como nos outros serviços, a projeção faz parte do contrato: a RLS de
  * `church_branches` é por linha e deixaria ler a linha inteira — o que limita as
@@ -51,6 +53,10 @@ export interface BranchDraft {
 export type BranchWriteResult =
   | { ok: true; branch: ChurchBranch; error?: never }
   | { ok: false; error: string; branch?: never }
+
+export type BranchDeleteResult =
+  | { ok: true; error?: never }
+  | { ok: false; error: string }
 
 /** Colunas enviadas na criação. `id` e os carimbos ficam com o banco. */
 export const BRANCH_INSERT_COLUMNS = [
@@ -160,6 +166,28 @@ export async function updateBranch(id: string, draft: BranchDraft, actor: Branch
 
 function gateWrite(actor: BranchActor): string | null {
   return can(actor.role, 'church.manage') ? null : BRANCH_MANAGE_DENIED
+}
+
+/**
+ * Excluir filial (0025): mesma régua de quem cadastra — `church.manage`. O
+ * `.select('id')` devolve as linhas que o banco **deletou**: zero linhas é o
+ * USING recusando em silêncio (filial de outra igreja, ou já apagada) e a
+ * resposta é a mesma de "não existe", sem oráculo. Eventos e horários que
+ * apontavam para ela sobrevivem como "sem filial" — é o `on delete set null`
+ * das duas FKs, não uma promessa desta função.
+ */
+export async function deleteBranch(id: string, actor: BranchActor): Promise<BranchDeleteResult> {
+  const denied = gateWrite(actor)
+  if (denied) return { ok: false, error: denied }
+
+  const { data, error } = await supabase
+    .from('church_branches')
+    .delete()
+    .eq('id', id)
+    .select('id')
+  if (error) return { ok: false, error: describeBranchDbError(error) }
+  if (!data || data.length === 0) return { ok: false, error: BRANCH_NOT_FOUND }
+  return { ok: true }
 }
 
 /** Vazio vira null: é o que a coluna guarda e o que a tela mostra como "—". */

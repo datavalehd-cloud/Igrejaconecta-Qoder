@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MapContainer, Marker, Popup, TileLayer } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { MapPin, Navigation, Phone, Route, Search } from 'lucide-react'
+import { Clock, MapPin, Navigation, Phone, Route, Search } from 'lucide-react'
 import { PageHeader, Button, Badge, Input, Card, CardBody } from '@/components/common/primitives'
 import { useMapChurches } from '@/hooks/useChurches'
 import { usePublicEvents } from '@/hooks/useEvents'
+import { usePublicServiceTimes } from '@/hooks/useServiceTimes'
 import { useGeolocation } from '@/hooks/useGeolocation'
 import { useDocumentMeta } from '@/hooks/useDocumentMeta'
+import { formatStartsAt, weekdayLabel } from '@/services/data/serviceTimeService'
 import { whatsappLink } from '@/utils/format'
 import { directionsUrl, distanceKm, formatDistance, sortByProximity, toLatLng, type LatLng } from '@/utils/geo'
 import type { Church } from '@/types'
@@ -52,6 +54,7 @@ export function ChurchMapPage() {
   useDocumentMeta({ title: 'Mapa de igrejas e eventos', path: '/mapa' })
   const { rows: churches, loading, error } = useMapChurches()
   const { rows: onAir } = usePublicEvents()
+  const { byChurch: serviceTimesByChurch } = usePublicServiceTimes()
   const geo = useGeolocation()
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<string | null>(null)
@@ -84,6 +87,7 @@ export function ChurchMapPage() {
   const missing = visible.length - plotted.length
   const active = sorted.find((c) => c.id === selected) ?? sorted[0] ?? null
   const activeCoords = active ? coordsOf(active) : null
+  const activeTimes = useMemo(() => (active ? serviceTimesByChurch.get(active.id) ?? [] : []), [active, serviceTimesByChurch])
 
   const tileHandlers = useMemo(
     () => ({
@@ -312,6 +316,17 @@ export function ChurchMapPage() {
                         </span>
                       )}
                     </div>
+                    {activeTimes.length > 0 && (
+                      <div className="mt-3 space-y-1 border-t border-line pt-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Horários dos cultos</p>
+                        {activeTimes.map((t) => (
+                          <p key={t.id} className="flex items-center gap-1 text-xs text-slate-600">
+                            <Clock className="h-3.5 w-3.5 text-brand-600" />
+                            {weekdayLabel(t.weekday)} · {formatStartsAt(t.starts_at)} — {t.name}
+                          </p>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="flex gap-2">
                     {activeCoords ? (

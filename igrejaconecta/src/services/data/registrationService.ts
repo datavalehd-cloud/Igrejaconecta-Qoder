@@ -80,7 +80,7 @@ export const REGISTER_MESSAGES: Record<string, string> = {
   ja_inscrita: 'Este e-mail já está inscrito neste evento.',
   evento_indisponivel: 'Este evento não está disponível para inscrição.',
   evento_encerrado: 'As inscrições para este evento já foram encerradas.',
-  dados_invalidos: 'Confira o nome (mínimo 2 letras) e um e-mail válido.',
+  dados_invalidos: 'Confira o nome (mínimo 2 letras). Se informar o e-mail, use um endereço válido.',
 }
 
 /** Códigos de `check_in_registration`. */
@@ -159,14 +159,15 @@ export async function registerForEvent(input: {
 }): Promise<RegistrationResult> {
   const name = input.name.trim()
   const email = input.email.trim().toLowerCase()
-  if (name.length < 2 || !email.includes('@')) {
+  // Nome é obrigatório; e-mail é opcional (0026) — mas, se preenchido, precisa ter '@'.
+  if (name.length < 2 || (email !== '' && !email.includes('@'))) {
     return { ok: false, error: REGISTER_MESSAGES.dados_invalidos }
   }
 
   const { data, error } = await supabase.rpc('register_for_event', {
     p_event: input.eventId,
     p_name: name,
-    p_email: email,
+    p_email: email || null,
     p_phone: input.phone?.trim() || null,
   })
   if (error) return { ok: false, error: describeDbError(error) }

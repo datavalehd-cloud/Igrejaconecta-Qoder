@@ -26,7 +26,8 @@ digital e inteligência artificial. **Sem cobrança, assinaturas ou faturamento*
 > tela vem de `event_registration_stats`, não de um número inventado. O **formulário de evento**
 > também escreve: cria rascunho, edita sem trocar o endereço público e transiciona o status —
 > publicar só para quem tem `events.publish`, cancelar para quem gerencia. A **Fase 4** (migração 0013,
-> grupo O) acrescenta **filiais** (`church_branches`, sem delete e sem vitrine pública), **coordenadas**
+> grupo O) acrescenta **filiais** (`church_branches`, sem delete na origem — reaberto pela 0025 na
+> Rodada K — e sem vitrine pública), **coordenadas**
 > no evento e na igreja, e o **mapa público real** — Leaflet + OpenStreetMap, GPS do navegador sem
 > geocodificador, distância e rota. A **Fase 5** (migração 0014, grupo P) grava **campanhas de
 > divulgação** no banco (rascunho, conteúdo preparado, redes alvo, agendamento) com a mesma audiência
@@ -71,6 +72,24 @@ digital e inteligência artificial. **Sem cobrança, assinaturas ou faturamento*
 > de mocks** (medido no `dist/`: nenhum dado fictício no bundle). O TikTok saiu do aplicativo inteiro — nem
 > perfil nem campanha oferecem a rede. 0015..0021 **já estão no projeto que está no ar** (passo M7
 > rodado em 2026-11-14: `M7-OK` no banco e a suíte inteira passando lá, sem resíduo depois do `rollback`).
+> **Rodada H (2026-11-15)**: `/app/horarios` era a última tela que inventava o próprio conteúdo — saiu
+> o seed de mentira, entrou a migração **0023** (`church_service_times`): CRUD real pela porta
+> `church.manage`, vitrine `anon` espelhando `churches_public_read`, e os horários agora aparecem de
+> verdade em `/igrejas` e no card do `/mapa`. O projeto no ar tem 0001..0022 aplicadas; **a 0023 ainda
+> não** — é só colar o arquivo da migração no SQL Editor (detalhes na seção da rodada).
+> **Rodada I (2026-11-15)**: "Configurações" do SuperAdmin lia valores hardcoded e dizia que não
+> existia tabela de configurações — a `system_settings` existe desde a 0001. Plataforma e LGPD agora
+> são lidos e gravados de verdade nas linhas `platform`/`privacy`, só para SuperAdmin (a política já
+> era essa régua; nada de SQL novo). Detalhes na seção da rodada.
+> **Rodada J (2026-11-15)**: `/admin/organizacoes` dizia "redes ainda não existem" enquanto a
+> 0017 (`church_networks` + `church_network_churches`) estava aplicada no projeto real desde o
+> passo M7. A tela agora é a interface daquelas tabelas: criar/renomear/apagar rede e
+> associar/desassociar igrejas, escrita exclusiva do SuperAdmin — também sem SQL novo.
+> **Rodada K (2026-11-15)**: as duas lacunas que as rodadas anteriores apontavam e não fechavam —
+> o campo **Vídeo** do formulário de evento ("sem coluna na tabela: não é gravado") e a **filial sem
+> excluir**. Entram **0024** (`events.video_url` com CHECK de três formas canônicas) e **0025**
+> (delete de filial reaberto com a régua `church.manage`, do jeito que a 0013 pediu). Nada de
+> pagamento, nada de provedor externo. As duas migrações ainda não foram coladas no projeto real.
 
 ## Stack
 
@@ -303,7 +322,7 @@ src/
                  # eventService (diretório público, evento por slug, agenda da igreja, categorias e a
                  # agenda global do SuperAdmin), registrationService (inscrição do visitante, lista da
                  # equipe, contagens, check-in e cancelamento — toda escrita por RPC), branchService
-                 # (filiais da 0013, sem delete), marketingService (campanhas da 0014, publicar bloqueado
+                 # (filiais da 0013, delete pela 0025), marketingService (campanhas da 0014, publicar bloqueado
                  # no banco), adminService
                  # (diretório global de vínculos do SuperAdmin, Fase 8 — gate + projeção congelada),
                  # ministryService (ministérios e equipe pela view `ministry_list` da 0015, com a
@@ -777,7 +796,7 @@ com a 0011 nos dois sentidos, como as projeções de leitura.
 
 **Campos desabilitados com o motivo na tela** (em vez de sumirem, para não fingir que gravam): Filial
 ("a tabela de eventos ainda não tem coluna de filial"), Latitude/Longitude ("Mapa e GPS são a Fase
-4"), Vídeo ("sem coluna na tabela") e o upload de capa — a capa é por URL http(s) já hospedada.
+4"), Vídeo ("sem coluna na tabela" — a coluna veio na 0024, Rodada K) e o upload de capa — a capa é por URL http(s) já hospedada.
 
 **Conta demo nova:** `paula@ibcentral.org.br` (comunicadora, igreja A). O comunicador é o único papel
 com `events.manage` **sem** `events.publish` e sem `registrations.manage` — sem uma conta ativa para
@@ -867,7 +886,9 @@ aplicado: a 0013 roda no Postgres embarcado (`npm run test:rls`, 23 declaraçõe
   `42501` e a **mesma** mensagem de uma filial inexistente — sem oráculo de existência (caso O8).
 - CHECK de coordenada nas três tabelas (`churches`, `church_branches`, `events`): `lat` entre -90 e 90,
   `lng` entre -180 e 180, NULL aceito. Endereço sem GPS é estado honesto, não erro (caso O9).
-- **Não há delete em camada nenhuma**: sem política e sem grant, nem o SuperAdmin apaga filial (O7). Uma
+- **Não há delete em camada nenhuma** na origem: sem política e sem grant, nem o SuperAdmin apagava
+  filial (O7, à época). **(Rodada K: a 0025 reabriu o delete de propósito, com a régua
+  `church.manage` e os casos O7/O10/O11/O12 medindo — ver a seção da rodada.)** Uma
   filial cadastrada é editada, não excluída; o serviço não expõe a operação e a tela não oferece botão.
 
 **O que passou a ser real no app:**
@@ -877,7 +898,8 @@ aplicado: a 0013 roda no Postgres embarcado (`npm run test:rls`, 23 declaraçõe
   comparada com a 0013 nos dois sentidos.
 - `eventService` — o formulário de evento grava filial e coordenadas (`branch_id`, `latitude`,
   `longitude`); a filial de outra igreja é recusada no espelho demo com `EVENT_BRANCH_MISMATCH`, a mesma
-  mensagem do trigger. Só o campo **Vídeo** continua desabilitado (sem coluna).
+  mensagem do trigger. Só o campo **Vídeo** continua desabilitado (sem coluna) — *(Rodada K: a coluna
+  veio na 0024 e o campo passou a gravar).*
 - `churchService` — `MAP_COLUMNS` (diretório + `lat`/`lng`) e `fetchMapChurches`/`demoMapChurches`.
 - **Mapa público (`/mapa`)** — Leaflet + OpenStreetMap (decisão sua): tiles reais, sem chave. Só é
   plotada igreja com coordenada real (`toLatLng`); sem coordenada a lista diz "não aparece no mapa" e o
@@ -951,7 +973,7 @@ No navegador local (modo demo, `npm run dev`), o texto do DOM confirmou:
 - **`/app/eventos/novo`** — o campo **Filial** é um `select` real e habilitado com as filiais da igreja
   vindas do `branchService` ("Sem filial (evento da igreja inteira)", "Congregação Zona Sul",
   "Sede — Centro"), e o `CoordsField` (latitude/longitude + GPS) está presente. O campo **Vídeo** segue
-  desabilitado (sem coluna na tabela).
+  desabilitado (sem coluna na tabela) — *mediação da época: na Rodada K a coluna veio e o campo grava.*
 
 Como nos passos anteriores, o caminho Supabase real foi verificado em camadas — cliente simulado nos
 unitários e SQL real no Postgres embarcado —, não ponta a ponta no provedor. A superfície visual do
@@ -975,8 +997,9 @@ aplicado: a 0014 roda no Postgres embarcado (`npm run test:rls`, 17 declaraçõe
 - CHECK de contenção em `networks` (só instagram/facebook/tiktok/whatsapp **na 0014** — a 0020 recria o
   CHECK sem o tiktok, no passo M3b) e em `status` (draft/
   scheduled/published/failed/cancelled). `event_id` é `on delete set null`; `church_id`, `on delete cascade`.
-- **Não há política de delete** e o grant de `authenticated` não inclui delete, como em `church_branches`
-  (0013). Campanha é **cancelada** (`status = 'cancelled'`), não apagada (caso P8).
+- **Não há política de delete** e o grant de `authenticated` não inclui delete (caso P8) — era o
+  mesmo desenho de `church_branches`, que a 0025 reabriu depois; campanha continua **cancelada**
+  (`status = 'cancelled'`), não apagada.
 
 **O que passou a ser real no app:**
 
@@ -1320,12 +1343,15 @@ ficam "não conectado" (exigem backend e provedores externos).
   botão morto "Ver logs". *(No M3b o TikTok saiu também daqui: são **4** provedores listados.)*
 - **Organizações** e **Suporte**: `EmptyState` honesto ("Redes de igrejas ainda não existem",
   "Suporte ainda não existe") — não há tabela, e agrupar igrejas ou abrir chamados exigiria
-  migração nova. Removidos os arrays fake e os botões mortos.
+  migração nova. Removidos os arrays fake e os botões mortos. *(Rodada J: as redes passaram a
+  existir de verdade — a tabela era a 0017 e a tela agora é a interface dela. Suporte continua
+  no EmptyState honesto do 0018 já aplicado.)*
 - **Configurações**: Plataforma e LGPD somente-leitura (sem tabela de configurações). O cartão
   **Segurança** reflete o que o banco e o código aplicam de fato: RLS Ativado, MFA Obrigatório,
   `service_role` no frontend Bloqueado, Supabase conectado (real). "Alertas de tentativas
   suspeitas", que era "Ativo" fabricado, virou "Não conectado". Removidos o botão "Salvar" e o
-  banner falso "salvas (demo)".
+  banner falso "salvas (demo)". *(Rodada I: o parágrafo mudou de novo — Plataforma e LGPD agora
+  leem e gravam em `system_settings`, e o alerta voltou a ser número real da 0019.)*
 
 ### Revisão de risco e prova por mutação
 
@@ -2248,9 +2274,9 @@ O que é verificado:
 | J | efeito de audiência da escrita de aprovação (`churchApprovalService`): aprovar põe no diretório anônimo (com `get diagnostics row_count` provando a escrita), suspender e rejeitar tiram **sem cegar a própria igreja**, e o J4 grava que a RLS é por linha — coluna protegida é projeção do app, não política |
 | K | trilha da aprovação: gerada pelo update (sem insert manual), embeds confirmados, membro lê apenas a própria igreja, update/delete recusados inclusive ao SuperAdmin, nenhuma trilha de aprovação recusada; K5 mede a recusa do insert manual pela API (0010), com sonda de que o trigger continua escrevendo |
 | L | atomicidade (0009/0010): trigger `SECURITY INVOKER` com `search_path` fixo e `AFTER UPDATE` por linha, política de insert amarrada à marca do trigger, seis transições com ator/nome/de/para vindos da sessão e da linha, nenhuma trilha em status repetido ou rename, rollback de igreja **e** trilha quando a auditoria falha, insert descartado silenciosamente aborta o update, e backend sem usuário deixa ator nulo |
-| M | eventos (0011): diretório do visitante medido **com e sem** o WHERE do app (rascunho, privado, não listado, agendado e igreja não aprovada invisíveis), catálogo de categorias público na leitura e fechado na escrita, membro lê os próprios em qualquer status e nada da vizinha, suspender/rejeitar a igreja tira os eventos do ar **sem cegar a própria igreja**, `visibility` gravado como intenção de produto e não como controle de acesso, publicar sem `events.publish` recusado (comunicador edita mas não publica; gerente publica), escrita cruzada entre igrejas recusada, e as projeções do app escritas por extenso — M8 é o avesso, como J4: a RLS não esconde coluna, quem limita é a projeção |
+| M | eventos (0011): diretório do visitante medido **com e sem** o WHERE do app (rascunho, privado, não listado, agendado e igreja não aprovada invisíveis), catálogo de categorias público na leitura e fechado na escrita, membro lê os próprios em qualquer status e nada da vizinha, suspender/rejeitar a igreja tira os eventos do ar **sem cegar a própria igreja**, `visibility` gravado como intenção de produto e não como controle de acesso, publicar sem `events.publish` recusado (comunicador edita mas não publica; gerente publica), escrita cruzada entre igrejas recusada, e as projeções do app escritas por extenso — M8 é o avesso, como J4: a RLS não esconde coluna, quem limita é a projeção; e **M11** (0024) é o CHECK `events_video_url_shape` do vídeo — as três formas canônicas aceitas, e `http://`, host alheio, `javascript:`, `/embed` colado cru e id curto recusados, com sonda anti-no-op dos quatro inserts bons |
 | N | inscrições (0012): `anon` sem grant nenhum na tabela, membro da A lê só as inscrições da A, comunicador não lê nem faz check-in (falta `registrations.manage`), inscrição do visitante por RPC com igreja derivada e código gerado, recusas por evento fora do ar / encerrado / dados inválidos / e-mail repetido, capacidade virando lista de espera, cancelamento promovendo o mais antigo da fila, `sem_permissao` para linha alheia **e** para id inexistente (permissão antes de existência), check-in repetido e de inscrição cancelada, escrita direta recusada inclusive para `authenticated`, `church_id` forjado barrado pelo trigger com `42501`, a view de agregados medida para anon (só eventos no ar) e para membro (rascunho próprio sim, o da vizinha não), usuário logado lendo só a própria linha, e o `information_schema` provando que a view não expõe nome, e-mail, telefone nem código |
-| O | filiais e localização (0013): `church_branches` sem grant de `anon` (recusa antes da RLS, O1), membro ativo lê só as filiais da própria igreja e `invited` não lê nada (O2/O3), escrita exige `church.manage` — gerente e comunicador leem mas não inserem nem editam (O4) —, church_admin cadastra/edita e transferir a filial de igreja é recusado (O5), SuperAdmin atravessa igrejas (O6), **excluir não existe** nem para o SuperAdmin (O7), `events.branch_id` de outra igreja recusado com a mesma mensagem e SQLSTATE de filial inexistente (O8, sem oráculo), coordenada fora do intervalo barrada nas três origens e NULL aceito (O9), e guardas estruturais — trigger DEFINER com `search_path` fixo e sem EXECUTE público, ausência de delete, WITH CHECK real e as colunas que o app projeta (O10). **M11** mede a localização gravada no evento |
+| O | filiais e localização (0013, delete pela 0025): `church_branches` sem grant de `anon` (recusa antes da RLS, O1), membro ativo lê só as filiais da própria igreja e `invited` não lê nada (O2/O3), escrita exige `church.manage` — gerente e comunicador leem mas não inserem nem editam (O4) —, church_admin cadastra/edita e transferir a filial de igreja é recusado (O5), SuperAdmin atravessa igrejas (O6), **excluir filial** — reaberto pela 0025 na régua `church.manage` — apaga com prova para quem pode, devolve zero linhas para quem não pode e para quem é de fora, sem oráculo, e o SuperAdmin apaga em qualquer igreja (O7), `events.branch_id` de outra igreja recusado com a mesma mensagem e SQLSTATE de filial inexistente (O8, sem oráculo), coordenada fora do intervalo barrada nas três origens e NULL aceito (O9), e guardas estruturais — trigger DEFINER com `search_path` fixo e sem EXECUTE público, política DELETE e grant de delete exatamente um para `authenticated` e zero para `anon` (O10), e a sobrevida de evento e horário de culto como "sem filial" depois do apagamento, lida até por `anon` (O11/O12, as duas FKs `on delete set null`) |
 | P | campanhas de divulgação (0014): `marketing_campaigns` sem grant de `anon` (recusa antes da RLS, P1), leitura e escrita exigem `marketing.manage` na igreja da campanha — pastor e visitante não leem nada e `invited` também não (P3), membro lê só as da própria igreja e nada da vizinha (P2), SuperAdmin atravessa (P6) —, insert na igreja alheia recusado (P4) e transferência de igreja barrada no update (P5), **publicar é impossível pelo app**: o trigger `enforce_campaign_publish` recusa `published`/`failed` de `authenticated` com `42501` e a mensagem casada, e só `service_role` marca publicada (P7), transições legítimas (agendar/cancelar/voltar a rascunho) permitidas, **excluir não existe** nem para o SuperAdmin (P8), CHECK de `networks` e `status` comportamental (P9), e guardas estruturais — trigger de publicação INVOKER com `search_path` fixo, ausência de delete e de grant de `anon`, WITH CHECK real no insert e no update, as três políticas citando `marketing.manage` e as colunas projetadas (P9b) |
 | Q | ministérios e perfis de rede (0015) + a guarda de audiência da 0021: `anon` sem grant nenhum (Q1), membro ativo lê os ministérios da própria igreja com **líder pelo nome e contagem vinda de `ministry_members`** (Q2), `invited` não lê e quem não tem `members.manage` lê mas não escreve (Q3), cruzar igreja não vale nem lendo nem escrevendo (Q4), quem gerencia escreve na própria (Q5), @handle de rede é gravado por `church.manage` (Q6) e **marcar `connected` é impossível pelo app** — `enforce_social_connection` recusa `authenticated` com `42501`, inclusive nascendo conectada (Q7) —, estrutura anti-deriva com políticas, grants, view e o CHECK de rede sem `tiktok` (Q8). Q9/Q9b/Q9c são a 0021: líder ou participante de outra igreja **e de vínculo `invited`** recusados, a mesma escrita correta aceita (sonda anti-no-op) e os dois triggers conferidos no catálogo |
 | R | favoritos e preferências do visitante (0016): `anon` não lê nenhuma das duas (R1), cada um vê só a própria lista — inclusive quem não tem vínculo nenhum (R2), escrever na lista do outro cai no `WITH CHECK` (R3), o caminho honesto funciona: salvar na própria lista e trocar as próprias preferências (R4), estrutura com uma política `for all` por tabela, sem update de favorito, e o CHECK de interesses **sem** `tiktok` (R5) |
@@ -2574,3 +2600,176 @@ restrito a `src/services/supabase/client.ts` com a anon key, e nenhuma credencia
   estrutural agora exige que o arquivo more em `tests/fixtures/` e que nada em `src/` o importe.
 - Verificação: `tsc -b`, 655 testes unitários, lint sem erros, `npm run test:rls` verde
   (mutação da 0022 derruba o caso D5) e build de produção com portão de segredos limpo.
+
+## Rodada H — Horários de culto reais (0023, 2026-11-15)
+
+`/app/horarios` era o último mock puro do painel: lista semente no próprio arquivo e botões que não
+gravavam, prometendo "aparecem no perfil público e no mapa". Agora a promessa é literal.
+
+- **Banco — `supabase/migrations/0023_church_service_times.sql`.** `church_service_times` com
+  `weekday smallint 0..6` (0 = domingo) e `starts_at time`: a ordenação semana→hora sai do banco, e
+  "25:00"/"Dominguu" não existem. Escrita é `church.manage` (decisão 1: nenhuma permissão nova —
+  horário é cadastro da igreja, a mesma régua de filial e perfil de rede). Leitura pública é o espelho
+  de `churches_public_read`: `anon` vê só igreja aprovada **e** ativa (decisão 2). `branch_id` opcional
+  com `on delete set null` e trigger `enforce_service_time_branch` recusando filial alheia com 42501,
+  cópia do padrão `enforce_event_branch` (0013). Delete existe de propósito (decisão 5).
+- **App.** `serviceTimeService` (projeção = contrato, `maybeSingle` sem oráculo, erros 42501/23514/23503
+  legíveis, `hh:mm` → `hh:mm:00`), hooks `useChurchServiceTimes`/`usePublicServiceTimes` (este agrupa
+  por igreja), tela reescrita com formulário inline e exclusão em dois passos, e a vitrine consumindo
+  de verdade: `ChurchCard` no `/igrejas` (até 3 horários + "+N") e o card da igreja ativa no `/mapa`.
+- **Prova.** 27 casos em `tests/unit/serviceTimeService.test.ts` (coluna projetada conferida com o DDL
+  da migração) e grupo **V** da suíte SQL: V1 anon na vitrine (lê abertas, não lê pendente, não
+  escreve), V3 membro administra a própria igreja antes da aprovação, V4/V5 as duas respostas de recusa
+  (42501 no insert, zero linhas no update/delete alheio) e o carimbo `updated_at` que o trigger move,
+  V6 SuperAdmin transversal, V7 os CHECKs, V8 filial cruzada, V9 a filial que morre sem levar o
+  horário, V10 as guardas estruturais (DEFINER + search_path, FKs cascade/set null, grants, tipos).
+  Verde local: 758 testes unitários, `tsc -b` limpo e `npm run test:rls` inteiro. **Prova por mutação**:
+  6 mutações (gate do serviço removido, normalização da hora, delete silencioso, erro de leitura
+  engolido, `with check (true)` no insert, FK da filial em cascade) — todas ficaram vermelhas e os
+  arquivos voltaram por md5.
+- **Para levar ao ar.** Colar `supabase/migrations/0023_church_service_times.sql` inteiro no SQL Editor
+  do projeto `dlucvyjxidrfyjwuouvp` e executar (a migração é idempotente — `create table if not exists`
+  e `drop policy if exists`). Depois, opcional: colar `supabase/tests/database/rls_isolation.sql` e
+  conferir a última linha `RLS-ISOLATION: todos os casos passaram`; nada é persistido (o arquivo abre
+  `begin` e termina `rollback`). O app publicado continua funcionando sem a tabela — a tela de
+  horários mostra o erro de `42P01` em vez de inventar lista; com a migração aplicada, grava de verdade.
+
+## Rodada I — Configurações reais (`system_settings`, 2026-11-15)
+
+A tela `/admin/configuracoes` dizia no rodapé que "não existe tabela de configurações nesta versão".
+Existe desde a 0001 — `system_settings`, com as linhas `platform` e `privacy` criadas pelo
+`seed.sql` e política de leitura/escrita restrita a `is_superadmin()` (0002), já medida pela suíte
+SQL nos casos A4/B6/B7/C12. **Nenhuma migração nova foi necessária nesta rodada.**
+
+- **App.** `settingsService` (projeção `key,value,updated_at`, gate superadmin **antes** de qualquer
+  consulta nas duas pontas, `upsert(..., { onConflict: 'key' })` — insert puro estouraria 23505 na
+  segunda gravação e update puro não criaria linha —, `maybeSingle` sem linha = falha explícita,
+  nunca "salvo"; erros 42501 legíveis) e hook `useSystemSettings` sobre o keyed list. A tela passou a
+  ler as duas linhas reais: os campos editáveis são exatamente os que o JSON do seed guarda (nome e
+  modo de cadastro em `platform`; retenção de trilha, retenção de localização e consentimento em
+  `privacy`), o botão Salvar mostra o `updated_at` que o banco devolveu, e "salvar" só aparece quando
+  o rascunho difere do `value` cru da linha (comparação com a resposta do provedor, não com espelho).
+- **O que a tela diz, com honestidade.** Domínio passou a ser o `siteUrl` real do build
+  (`VITE_SITE_URL`) em campo rotulado como definição de código — o `igrejaconecta.app` do HTML antigo
+  era um domínio que não existe. E-mail remetente saiu da tela: o app não envia e-mail por provedor
+  nenhum. Os três campos de LGPD e o seletor de cadastro ganharam hint explicando que são
+  **declaração registrada, não interruptor**: o cadastro de igrejas segue livre com aprovação, o MFA
+  é exigido pelo código (`MFA_REQUIRED_ROLES`), e nenhum job expurga a trilha. Sem linha no banco
+  (projeto sem seed) o formulário vira "Criar linha" em vez de fingir valores lidos.
+- **Prova.** 27 casos em `tests/unit/settingsService.test.ts`: projeção conferida com o DDL da 0001;
+  as 6 identidades sem consulta na leitura e as 4 portas recusadas na escrita sem disparar nada; payload
+  do upsert (chave, valor, carimpo ISO, `onConflict`); linha ausente = falha; erros 42501/23505/
+  57014; e os parsers conferidos **contra o JSON literal do `seed.sql`** — round-trip inclusive, para
+  o formulário gravar a forma do seed e não outra. Verde: 785 testes unitários, `tsc -b` limpo,
+  lint sem novos avisos, build ok. **Prova por mutação** (`.qoder-scratch/mutation-proof-settings.mjs`,
+  não versionado): 6 mutações — gates de leitura e escrita removidos, `onConflict` sumindo, erro de
+  leitura engolido, linha que não volta virando sucesso, parser inventando `church_signup` — todas
+  vermelhas, arquivo restaurado por md5.
+- **Para levar ao ar.** Nada no banco: `system_settings` e as duas linhas já existem no projeto real
+  (0001/0002 + seed aplicado no passo M7 da rodada anterior). É só publicar o frontend quando vier o
+  pedido; a tela em si continua atrás de `requireSuperAdmin`.
+
+## Rodada J — Redes de igrejas reais (0017, 2026-11-15)
+
+`/admin/organizacoes` era o `EmptyState` que dizia "redes de igrejas ainda não existem". Existem
+desde a 0017 (`church_networks` + `church_network_churches`), aplicada no projeto real no bundle do
+passo M7 — o que faltava era a tela ser a interface daquelas tabelas. **Nenhuma migração nova nesta
+rodada**; os tipos `ChurchNetwork`/`NetworkChurch` espelham a view `church_network_list` e o vínculo.
+
+- **App.** `networkService`: projeções conferidas com o DDL (a lista lê a **view**, então
+  `churches_count` é contagem do banco, nunca digitada; o patch de edição leva só `name,description`
+  — `slug` nasce do nome uma vez e não se edita); gate superadmin **antes** de qualquer consulta nas
+  duas pontas (a política `is_superadmin()` é a segunda camada, não a primeira); `createNetwork` no
+  mesmo desenho validado do `createChurch` — insere sem `.select()` o slug-base e, em 23505, tenta
+  sufixos `-2`…`-10` e relê pela view. O 23505 é polissêmico e cada chamada o traduz para a sua
+  tabela: no create de rede é slug (tenta o próximo), no insert de vínculo é "essa igreja já está na
+  rede". `updateNetwork`/`deleteNetwork`/`removeChurchFromNetwork` usam o número de linhas que o
+  banco devolve como prova — zero linhas = "não existe", sem oráculo. Hooks `useNetworks` /
+  `useNetworkChurches` sobre o keyed list; o seletor de igrejas reusa `fetchSelectorChurches` da
+  gestão, marcando "(pendente)" quem ainda não foi aprovado.
+- **O que a tela diz, com honestidade.** O subtítulo antigo prometia "região e relatórios
+  consolidados" — a 0017 tem um nível só (rede → igreja) e nenhum relatório por rede; o rodapé agora
+  diz exatamente isso. Apagar a rede desfaz **os vínculos**, nunca as igrejas (decisão 5 da
+  migração, `on delete cascade` nas duas pontas da PK composta), e a confirmação é em dois passos.
+- **Prova.** 31 casos em `tests/unit/networkService.test.ts`: projeção↔DDL, `churches_count` nasce
+  da view (regex no `count(*)` da migração), gates sem disparar consulta, desempate de slug na
+  segunda tentativa, 10×23505 = `SLUG_TAKEN` sem releitura inventada, patch sem `slug`/`id`, delete
+  0/1 linhas, 23505/23503/42501 legíveis e a superfície do módulo (20 exports). Verde: **816 testes
+  unitários**, `tsc -b` limpo, lint na linha de base (9 avisos, nenhum novo), build ok. No banco,
+  quem mede a decisão "associação é da plataforma" já é o grupo **S** da suíte (S1 SuperAdmin cria,
+  associa, vê a contagem e desfaz; S2 o membro só vê a rede da própria igreja; S3 papel de igreja
+  não escreve nada; S4 anon e sem-vínculo não veem rede nenhuma; S5 estrutura — grants, slug único,
+  cascata). **Prova por mutação** (`.qoder-scratch/mutation-proof-networks.mjs`, não versionado):
+  6 mutações — gates de leitura e de escrita abertos, patch voltando a levar `slug`, 23505 de
+  vínculo lido como slug, `continue` virando `return` no desempate, delete silencioso — todas
+  ficaram vermelhas e os arquivos voltaram por md5.
+- **Para levar ao ar.** Nada no banco: a 0017 já está aplicada no projeto real (bundle M7). É só
+  publicar o frontend quando vier o pedido; a tela continua atrás de `requireSuperAdmin`, e o botão
+  de associar igrejas usa a mesma lista do seletor do painel.
+
+## Rodada K — as lacunas do grupo 4: vídeo do evento (0024) e excluir filial (0025) (2026-11-15)
+
+A auditoria de lacunas do grupo 4 achou duas promessas que as rodadas anteriores anunciavam e não
+fechavam: o campo **Vídeo** do formulário de evento, desabilitado com "sem coluna na tabela: não é
+gravado", e a **filial sem excluir** — a 0013 tinha fechado o delete de propósito e escrito na
+migração a régua para reabri-lo. É exatamente o que ela pedia, e nada além disso: **duas migrações,
+nenhum provedor externo, nenhum caminho de pagamento**.
+
+- **0024 — `events.video_url`.** Coluna `text` anulável com o CHECK
+  `events_video_url_shape`, que aceita **exatamente três formas canônicas**: `https://www.youtube.com/watch?v=…`
+  (id `[A-Za-z0-9_-]{6,}`), `https://youtu.be/…` e `https://vimeo.com/<número>` — mais NULL. URL
+  livre estava fora de cogitação: a tela nunca combinou de tocar vídeo de outro lugar, e o CHECK é o
+  que impede `javascript:`, http e hospedagem alheia de chegarem ao iframe do visitante. Vídeo entra
+  nas **duas projeções** (pública e de gestão) — o sentido da coluna é o visitante ver, e a cerca
+  continua sendo a política de linha de `events` (M1/M4 já medem rascunho fora do ar).
+- **App do vídeo.** `utils/video.ts` traduz o que a pessoa cola (watch com `?t=`/`&list=`, `m.` e
+  sem `www`, `/embed`, `/shorts`, `/live`, `youtu.be` com tracking, `player.vimeo.com/video/…`) para
+  a forma do banco; o serviço grava **a forma canônica**, nunca o texto cru (`canonicalVideoUrl`,
+  compartilhada com o espelho demo para os dois caminhos gravarem idêntico). O tocador da página
+  pública monta o embed a partir do **id extraído** — `youtube-nocookie` no YouTube, `player.vimeo`
+  no Vimeo —, então um link malicioso não consegue apontar o iframe para host nenhum. O campo foi
+  habilitado no formulário com a mensagem `EVENT_VIDEO_NOT_PLAYABLE` quando a forma não é tocável.
+- **0025 — excluir filial, do jeito que a 0013 pediu.** Grant `delete` re-declarado por inteiro e
+  política `church_branches_delete` **só com `USING`** (delete não produz valor novo), na régua
+  `church.manage` de quem cadastra e edita — `has_church_permission` já traz o SuperAdmin no bojo
+  (0001), nenhuma permissão nova nasce aqui. Quem é de fora recebe **zero linhas, sem erro** — a
+  mesma ausência de oráculo do UPDATE cruzado (O5). Excluir filial **não apaga nada junto**: as FKs
+  `events.branch_id` (0013) e `church_service_times.branch_id` (0023) são `on delete set null`, e o
+  evento/horário sobrevivem como "sem filial"; apagar inscrições junto destruiria dados reais para
+  corrigir um cadastro.
+- **App do delete.** `branchService.deleteBranch` com o gate `church.manage` **antes** de qualquer
+  consulta, `.delete().eq('id').select('id')` pedindo de volta as linhas apagadas (zero linhas =
+  "não existe"; `42501` = sem permissão, legível por SQLSTATE como no resto do serviço). Na tela, o
+  botão Excluir é em dois passos (lixeira → Confirmar) e o aviso é a consequência honesta: o título
+  diz "não apaga eventos nem horários; pede confirmação" e o rodapé que eles ficam "sem filial".
+- **Decisões que ficaram de fora, por escrito.** **Check-in por QR**: a câmera não existe sem uma
+  biblioteca de decodificação (zxing e afins), e o contrato do grupo 4 era não puxar backend/provedor
+  novo — o check-in por **código digitado** continua real e medido (grupo N). **Período nos
+  relatórios**: sem tabelas de período na origem, é oferta futura (a régua do banco é a 0012 com as
+  datas dos próprios eventos). Nada disso foi fingido na UI: as telas continuam dizendo o que existe.
+- **Prova.** No banco, o **M11** novo mede o CHECK (quatro inserts canônicos aceitos com sonda
+  anti-no-op, seis recusas — http, host alheio, `javascript:`, `/embed` cru, id curto — e recontagem
+  final), e o grupo **O** foi reescrito onde a 0025 mexeu: **O7** mede o delete dos quatro lados
+  (o dono apaga com prova de 1 linha; o gerente de outra igreja apaga zero e a sede fica intacta —
+  integridade conferida por quem tem leitura dela, lição do falso-positivo que a primeira versão
+  deu; o vizinho sem direito recebe a mesma mensagem de "não existe"; SuperAdmin apaga em qualquer), **O10** virou a cerca estrutural da reabertura (exatamente uma política DELETE
+  citando `church.manage`, grant `authenticated` = 1 / `anon` = 0, e a lista anti-deriva de colunas
+  de `events` agora com `video_url`), e **O11/O12** provam a sobrevida "sem filial" de evento
+  publicado e horário de culto — lida até por `anon`. Verde: suíte completa com **1183 declarações**,
+  **882 testes unitários** (novo `tests/unit/video.test.ts` com a cerca parser↔CHECK extraída do SQL
+  da 0024 — deriva de qualquer um dos dois lados fica vermelha; delete nos dois níveis em
+  `branches.test.ts`; vídeo na loja do fixture), `tsc -b` limpo, lint na linha de base (9 avisos,
+  nenhum novo), build ok. **Prova por mutação** (em `.qoder-scratch/`, não versionada): 4 mutações —
+  CHECK da 0024 afrouxado (6 cercas vermelhas), gate do `deleteBranch` removido (consulta sai do
+  papel errado), política da 0025 virando `USING (true)` (a sonda **E2** da própria suíte derruba o
+  run antes de tudo), normalização canônica sumindo do `eventService` (o cru chegaria ao banco) —
+  todas detectadas, arquivos restaurados e reverdes.
+- **Para levar ao ar.** **As duas migrações ainda não estão no projeto real**: colar
+  `supabase/migrations/0024_event_video_url.sql` e depois `0025_branch_delete.sql`, inteiros e nesta
+  ordem, no SQL Editor do projeto `dlucvyjxidrfyjwuouvp` (as duas são idempotentes —
+  `add column if not exists`, `drop constraint/policy if exists`, `grant` aditivo). Opcional depois:
+  colar a suíte e conferir `RLS-ISOLATION: todos os casos passaram` — nada persiste (abre `begin`,
+  termina `rollback`). Sem as duas no banco o resto do app continua igual: o save de um evento **com
+  vídeo** falha com erro legível de coluna inexistente (sem vídeo gravado, nada muda), e o delete de
+  filial devolve `42501` traduzido para a mensagem de permissão — nenhuma outra tela é afetada. O
+  frontend publicado só mostra as duas features depois do próximo deploy, quando vier o pedido.

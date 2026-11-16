@@ -6,6 +6,7 @@ import {
   BRANCH_NOT_FOUND,
   validateBranchDraft,
   type BranchActor,
+  type BranchDeleteResult,
   type BranchDraft,
   type BranchWriteResult,
 } from '@/services/data/branchService'
@@ -13,10 +14,11 @@ import { can } from '@/utils/rbac'
 import type { ChurchBranch } from '@/types'
 
 /**
- * Loja em memória que espelha `church_branches` (0013) para os testes. Vive fora do
- * aplicativo: as regras de audiência e de "sem oráculo" estão provadas na suíte SQL
- * (grupo O); aqui elas continuam especificadas em TypeScript, para a consulta real
- * não divergir do que a tela sempre mostrou.
+ * Loja em memória que espelha `church_branches` (0013, delete reaberto pela 0025)
+ * para os testes. Vive fora do aplicativo: as regras de audiência e de "sem
+ * oráculo" estão provadas na suíte SQL (grupo O); aqui elas continuam
+ * especificadas em TypeScript, para a consulta real não divergir do que a tela
+ * sempre mostrou.
  */
 
 /** Espelha `church_branches_read`: membro ativo da igreja, ou SuperAdmin para todas. */
@@ -74,6 +76,23 @@ export function demoUpdateBranch(id: string, draft: BranchDraft, actor: BranchAc
 
 export function resetBranchFixture() {
   branches.splice(0, branches.length, ...structuredClone(originalBranches))
+}
+
+/**
+ * Espelha a política `church_branches_delete` (0025): régua `church.manage`, e
+ * quem é de fora recebe zero linhas do banco — aqui, a mesma mensagem de
+ * "não existe", sem oráculo (caso O7).
+ */
+export function demoDeleteBranch(id: string, actor: BranchActor): BranchDeleteResult {
+  const denied = gateWrite(actor)
+  if (denied) return { ok: false, error: denied }
+  const index = branches.findIndex((b) => b.id === id)
+  if (index < 0) return { ok: false, error: BRANCH_NOT_FOUND }
+  if (actor.role !== 'superadmin' && branches[index]!.church_id !== actor.churchId) {
+    return { ok: false, error: BRANCH_NOT_FOUND }
+  }
+  branches.splice(index, 1)
+  return { ok: true }
 }
 
 /** Espelha USING + WITH CHECK de `church_branches_update`, com o SuperAdmin transversal. */

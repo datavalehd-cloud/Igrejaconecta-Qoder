@@ -34,7 +34,8 @@ import type { ChurchEvent, EventStatus, EventVisibility } from '@/types'
  *
  * Campos sem coluna na tabela ficam desabilitados com o motivo à vista, em vez de
  * sumirem: quem testa o desenho precisa saber o que ainda não grava. Filial e
- * coordenadas já gravam (Fase 4, migração 0013); só o vídeo continua sem coluna.
+ * coordenadas já gravam (Fase 4, migração 0013) e o vídeo também (0024) — não
+ * restou campo desabilitado nesta tela.
  */
 
 interface FormState {
@@ -46,6 +47,7 @@ interface FormState {
   address: string
   city: string
   coverUrl: string
+  videoUrl: string
   capacity: string
   visibility: EventVisibility
   branchId: string
@@ -61,7 +63,7 @@ function toFormState(event?: ChurchEvent): FormState {
   if (!event) {
     return {
       name: '', description: '', categoryId: '', startsAt: '', endsAt: '',
-      address: '', city: '', coverUrl: '', capacity: '', visibility: 'public',
+      address: '', city: '', coverUrl: '', videoUrl: '', capacity: '', visibility: 'public',
       branchId: '', latitude: '', longitude: '',
     }
   }
@@ -74,6 +76,7 @@ function toFormState(event?: ChurchEvent): FormState {
     address: event.address ?? '',
     city: event.city ?? '',
     coverUrl: event.cover_url ?? '',
+    videoUrl: event.video_url ?? '',
     capacity: event.capacity ? String(event.capacity) : '',
     visibility: event.visibility,
     branchId: event.branch_id ?? '',
@@ -164,6 +167,7 @@ function EventForm({ event }: { event?: ChurchEvent }) {
       address: form.address,
       city: form.city,
       cover_url: coverUrl,
+      video_url: form.videoUrl,
       capacity: form.capacity.trim() === '' ? null : Number(form.capacity),
       visibility: form.visibility,
       branch_id: form.branchId || null,
@@ -356,8 +360,8 @@ function EventForm({ event }: { event?: ChurchEvent }) {
                 />
                 <p className="mt-1 text-xs text-slate-400">1200×630 recomendado. A capa entra em vigor quando o evento for salvo.</p>
               </div>
-              <Field label="Vídeo (YouTube/Vimeo)" hint="Sem coluna na tabela de eventos ainda: não é gravado.">
-                <Input disabled placeholder="https://..." />
+              <Field label="Vídeo (YouTube/Vimeo)" hint="Toca na página pública do evento. Só link do YouTube ou do Vimeo: o banco recusa endereço de outro site.">
+                <Input value={form.videoUrl} onChange={(e) => set('videoUrl', e.target.value)} placeholder="https://www.youtube.com/watch?v=..." />
               </Field>
             </CardBody>
           </Card>

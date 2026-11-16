@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Network, Pencil, Plus, X } from 'lucide-react'
+import { Network, Pencil, Plus, Trash2, X } from 'lucide-react'
 import {
   Badge,
   Button,
@@ -16,15 +16,16 @@ import { CoordsField } from '@/components/common/CoordsField'
 import { Notice } from '@/components/common/Notice'
 import { useChurchBranches } from '@/hooks/useBranches'
 import { usePermissions } from '@/hooks/usePermissions'
-import { createBranch, updateBranch, type BranchDraft } from '@/services/data/branchService'
+import { createBranch, deleteBranch, updateBranch, type BranchDraft } from '@/services/data/branchService'
 import type { ChurchBranch } from '@/types'
 
 /**
  * Filiais (Fase 4). A leitura vem de `church_branches` pela política
  * `church_branches_read` (membro ativo da própria igreja); a escrita passa por
- * `church.manage` e pelo WITH CHECK da 0013. Não existe exclusão: a tabela não
- * tem política nem permissão de delete (casos O7/O10), então a tela não oferece
- * o botão — uma filial cadastrada é editada, não apagada.
+ * `church.manage` e pelo WITH CHECK da 0013. Excluir é a mesma régua (0025):
+ * `church.manage`, confirmação em dois passos, e o aviso de que nada mais é
+ * apagado junto — eventos e horários viram "sem filial" pelo `on delete
+ * set null` das FKs (0013/0023), medido nos casos O11/O12 da suíte.
  */
 
 type Editing = { mode: 'create' } | { mode: 'edit'; branch: ChurchBranch }
@@ -34,11 +35,29 @@ function parseCoord(value: string): number | null {
 }
 
 export function BranchesPage() {
-  const { churchId, can } = usePermissions()
+  const { churchId, role, can } = usePermissions()
   const { rows, loading, error, reload } = useChurchBranches()
   const [editing, setEditing] = useState<Editing | null>(null)
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
+  const [armed, setArmed] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
   const canManage = can('church.manage')
+
+  async function remove(branch: ChurchBranch) {
+    if (busy) return
+    setBusy(true)
+    setNotice(null)
+    const result = await deleteBranch(branch.id, { churchId, role })
+    setBusy(false)
+    setArmed(null)
+    if (!result.ok) {
+      setNotice({ tone: 'error', text: result.error })
+      return
+    }
+    if (editing?.mode === 'edit' && editing.branch.id === branch.id) setEditing(null)
+    setNotice({ tone: 'ok', text: `Filial "${branch.name}" removida: nenhum evento ou horário foi apagado junto — eles ficaram "sem filial".` })
+    reload()
+  }
 
   if (!churchId) {
     return (
@@ -78,14 +97,31 @@ export function BranchesPage() {
           header: 'Ações',
           className: 'text-right',
           cell: (b: ChurchBranch) => (
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-1">
               <Button
                 variant="ghost"
                 size="sm"
                 icon={<Pencil className="h-4 w-4" />}
                 aria-label={`Editar ${b.name}`}
+                disabled={busy}
                 onClick={() => { setNotice(null); setEditing({ mode: 'edit', branch: b }) }}
               />
+              {armed === b.id ? (
+                <>
+                  <Button size="sm" variant="danger" title={`Confirmar: excluir a filial ${b.name}`} disabled={busy} onClick={() => remove(b)}>Confirmar</Button>
+                  <Button variant="ghost" size="sm" icon={<X className="h-4 w-4" />} aria-label="Cancelar exclusão" onClick={() => setArmed(null)} />
+                </>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<Trash2 className="h-4 w-4 text-red-500" />}
+                  aria-label={`Excluir filial ${b.name}`}
+                  title="Excluir filial: não apaga eventos nem horários; pede confirmação"
+                  disabled={busy}
+                  onClick={() => setArmed(b.id)}
+                />
+              )}
             </div>
           ),
         } as Column<ChurchBranch>]
@@ -136,7 +172,8 @@ export function BranchesPage() {
               <Badge tone="navy">Isolamento</Badge>
               Filiais só são visíveis para membros ativos da própria igreja.
               <span className="text-slate-400">
-                Sem exclusão pelo app: a tabela de filiais não tem delete — uma filial cadastrada é editada, não apagada.
+                Excluir filial não apaga evento nenhum: eventos e horários que apontavam para ela ficam
+                "sem filial" (é o `set null` das FKs no banco, casos O11/O12 da suíte).
               </span>
             </CardBody>
           </Card>

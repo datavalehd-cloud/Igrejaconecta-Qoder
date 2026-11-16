@@ -4,6 +4,7 @@ import { PageHeader, Input, Select, EmptyState } from '@/components/common/primi
 import { EventCard, ChurchCard } from '@/components/common/Cards'
 import { useDirectoryChurches } from '@/hooks/useChurches'
 import { useEventCategories, usePublicEvents } from '@/hooks/useEvents'
+import { usePublicServiceTimes } from '@/hooks/useServiceTimes'
 import { useDocumentMeta } from '@/hooks/useDocumentMeta'
 
 export function EventsPage() {
@@ -65,6 +66,7 @@ export function EventsPage() {
 export function ChurchesPage() {
   useDocumentMeta({ title: 'Igrejas', path: '/igrejas' })
   const { rows, loading, error } = useDirectoryChurches()
+  const { byChurch: serviceTimes } = usePublicServiceTimes()
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
@@ -84,7 +86,7 @@ export function ChurchesPage() {
         />
       ) : (
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {rows.map((c) => <ChurchCard key={c.id} church={c} />)}
+          {rows.map((c) => <ChurchCard key={c.id} church={c} serviceTimes={serviceTimes.get(c.id)} />)}
         </div>
       )}
     </div>

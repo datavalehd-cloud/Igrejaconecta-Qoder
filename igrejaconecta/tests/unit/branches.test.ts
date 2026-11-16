@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { branches, members } from '../fixtures/mock'
-import * as branchService from '@/services/data/branchService'
 import {
   BRANCH_COLUMNS,
   BRANCH_INSERT_COLUMNS,
@@ -10,6 +9,7 @@ import {
   BRANCH_NOT_FOUND,
   BRANCH_PATCH_COLUMNS,
   createBranch,
+  deleteBranch,
   fetchChurchBranches,
   updateBranch,
   validateBranchDraft,
@@ -19,18 +19,21 @@ import {
 import {
   demoChurchBranches,
   demoCreateBranch,
+  demoDeleteBranch,
   demoUpdateBranch,
   resetBranchFixture,
 } from '../fixtures/branchMirror'
 
 /**
- * Filiais (0013, Fase 4). A RLS é por linha e não limita coluna, então a projeção
- * daqui é o contrato do que chega ao navegador; a loja em memória do fixture
- * (`tests/fixtures/branchMirror.ts`) continua especificando a audiência da política
- * (membro **ativo** da própria igreja, SuperAdmin para todas — caso O3: vínculo
- * `invited` não lê). E não existe delete em camada nenhuma: a tabela não tem
- * política nem grant de delete (O7/O10), então o serviço também não pode expor a
- * operação.
+ * Filiais (0013, Fase 4; delete reaberto pela 0025). A RLS é por linha e não
+ * limita coluna, então a projeção daqui é o contrato do que chega ao navegador;
+ * a loja em memória do fixture (`tests/fixtures/branchMirror.ts`) continua
+ * especificando a audiência da política (membro **ativo** da própria igreja,
+ * SuperAdmin para todas — caso O3: vínculo `invited` não lê). O delete existe
+ * desde a 0025, com a régua `church.manage` de quem cadastra e edita: sem o
+ * permission, nada sai do app; com ele, quem é de fora recebe "não existe"
+ * (casos O7/O10) e eventos/horários vinculados sobrevivem "sem filial"
+ * (O11/O12).
  */
 
 const backend = vi.hoisted(() => ({ supabase: null as { from: ReturnType<typeof vi.fn> } | null }))
@@ -43,10 +46,12 @@ const chain = {
   order: vi.fn(),
   insert: vi.fn(),
   update: vi.fn(),
+  delete: vi.fn(),
   maybeSingle: vi.fn(),
   // A leitura termina em `.order()` (SuperAdmin) ou em `.eq()` (membro) e o
   // resultado é esperado com `await query`; o builder real é thenable, e a
-  // cadeia simulada precisa ser também para os dois caminhos resolverem.
+  // cadeia simulada precisa ser também para os dois caminhos resolverem. O
+  // delete awaited sem `maybeSingle` também passa por aqui.
   then: vi.fn(),
 }
 const from = vi.fn()
@@ -74,6 +79,7 @@ beforeEach(() => {
   chain.order.mockReturnValue(chain)
   chain.insert.mockReturnValue(chain)
   chain.update.mockReturnValue(chain)
+  chain.delete.mockReturnValue(chain)
   chain.maybeSingle.mockResolvedValue({ data: null, error: null })
   chain.then.mockImplementation((onFulfilled: (v: unknown) => unknown, onRejected: (e: unknown) => unknown) =>
     Promise.resolve(readResult).then(onFulfilled, onRejected),
@@ -214,7 +220,7 @@ describe('escritas — portas de permissão', () => {
   })
 })
 
-describe('escrita na loja do fixture — cria e edita, nunca apaga', () => {
+describe('escrita na loja do fixture — cria, edita e apaga', () => {
   it('church_admin cria filial na própria igreja, com a igreja da sessão', () => {
     const antes = branches.length
     const resultado = demoCreateBranch(validDraft(), { churchId: 'ch1', role: 'church_admin' })
@@ -255,11 +261,69 @@ describe('escrita na loja do fixture — cria e edita, nunca apaga', () => {
     expect(branches.find((b) => b.id === 'b3')?.name).toBe('Campus Aquarius')
   })
 
-  it('o serviço não expõe delete em nenhuma forma', async () => {
-    const nomes = Object.keys(branchService)
-    expect(nomes.filter((n) => /delete|remove|destroy|excluir/i.test(n))).toEqual([])
-    const fonte = readFileSync(new URL('../../src/services/data/branchService.ts', import.meta.url), 'utf8')
-    expect(fonte).not.toMatch(/\.delete\(/)
+  it('church_admin apaga filial da própria igreja', () => {
+    expect(demoDeleteBranch('b1', { churchId: 'ch1', role: 'church_admin' })).toEqual({ ok: true })
+    expect(branches.some((b) => b.id === 'b1')).toBe(false)
+    expect(branches.some((b) => b.id === 'b3')).toBe(true)
+  })
+
+  it('papel sem church.manage não apaga, e a linha fica onde está', () => {
+    expect(demoDeleteBranch('b1', { churchId: 'ch1', role: 'manager' })).toEqual({ ok: false, error: BRANCH_MANAGE_DENIED })
+    expect(branches.some((b) => b.id === 'b1')).toBe(true)
+  })
+
+  it('filial da vizinha é "não existe": mensagem igual e linha intacta (caso O7)', () => {
+    // b3 é da ch2; a1 administra a ch1. A política devolve zero linhas — o
+    // fixture reproduz isso com a mesma mensagem de filial inexistente.
+    expect(demoDeleteBranch('b3', { churchId: 'ch1', role: 'church_admin' })).toEqual({ ok: false, error: BRANCH_NOT_FOUND })
+    expect(demoDeleteBranch('filial-que-nao-existe', { churchId: 'ch1', role: 'church_admin' }))
+      .toEqual({ ok: false, error: BRANCH_NOT_FOUND })
+    expect(branches.find((b) => b.id === 'b3')?.name).toBe('Campus Aquarius')
+  })
+
+  it('SuperAdmin é transversal também no delete', () => {
+    expect(demoDeleteBranch('b3', { role: 'superadmin' })).toEqual({ ok: true })
+    expect(branches.some((b) => b.id === 'b3')).toBe(false)
+  })
+
+  it('o delete abriu na 0025 com a régua church.manage, não em código de app', () => {
+    const sql = readFileSync(new URL('../../supabase/migrations/0025_branch_delete.sql', import.meta.url), 'utf8')
+    expect(sql).toMatch(/create policy church_branches_delete on public\.church_branches\s+for delete to authenticated\s+using \(public\.has_church_permission\(church_id, 'church\.manage'\)\)/)
+    expect(sql).toMatch(/grant select, insert, update, delete on public\.church_branches to authenticated/)
+  })
+})
+
+describe('delete real — porta, contrato e erros do banco', () => {
+  it('papel sem church.manage não apaga, e nenhuma consulta sai', async () => {
+    for (const role of ['manager', 'communicator', 'pastor', 'visitor'] as const) {
+      expect(await deleteBranch('b1', { churchId: 'ch1', role })).toEqual({ ok: false, error: BRANCH_MANAGE_DENIED })
+    }
+    expect(from).not.toHaveBeenCalled()
+  })
+
+  it('o comando pede as linhas apagadas de volta por id', async () => {
+    readResult = { data: [{ id: 'b1' }], error: null }
+    expect(await deleteBranch('b1', { churchId: 'ch1', role: 'church_admin' })).toEqual({ ok: true })
+    expect(from).toHaveBeenCalledWith('church_branches')
+    expect(chain.delete).toHaveBeenCalled()
+    expect(chain.eq).toHaveBeenCalledWith('id', 'b1')
+    expect(chain.select).toHaveBeenCalledWith('id')
+  })
+
+  it('SuperAdmin usa o mesmo comando, sem recorte de igreja', async () => {
+    readResult = { data: [{ id: 'b3' }], error: null }
+    expect(await deleteBranch('b3', { role: 'superadmin' })).toEqual({ ok: true })
+    expect(chain.eq).toHaveBeenCalledWith('id', 'b3')
+  })
+
+  it('zero linhas apagadas é a mesma mensagem de não-existente: sem oráculo', async () => {
+    readResult = { data: [], error: null }
+    expect(await deleteBranch('b3', { churchId: 'ch1', role: 'church_admin' })).toEqual({ ok: false, error: BRANCH_NOT_FOUND })
+  })
+
+  it('erro 42501 vira a mensagem de permissão', async () => {
+    readResult = { data: null, error: { code: '42501', message: 'permission denied for table church_branches' } }
+    expect(await deleteBranch('b1', { churchId: 'ch1', role: 'church_admin' })).toEqual({ ok: false, error: BRANCH_MANAGE_DENIED })
   })
 })
 

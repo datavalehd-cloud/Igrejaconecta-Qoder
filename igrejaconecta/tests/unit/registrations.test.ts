@@ -66,6 +66,10 @@ const suite = readFileSync(
   path.resolve(import.meta.dirname, '../../supabase/tests/database/rls_isolation.sql'),
   'utf8',
 )
+const optionalEmailMigration = readFileSync(
+  path.resolve(import.meta.dirname, '../../supabase/migrations/0026_optional_registration_email.sql'),
+  'utf8',
+)
 
 beforeEach(() => {
   // O app não tem mais caminho sem Supabase: o client simulado está montado para
@@ -265,6 +269,28 @@ describe('contrato SQL — 0012', () => {
   })
 })
 
+describe('contrato SQL — 0026 (e-mail opcional na inscrição)', () => {
+  it('remove o NOT NULL de visitor_email', () => {
+    expect(optionalEmailMigration).toMatch(/alter column visitor_email\s+drop not null/)
+  })
+
+  it('redefine a mesma assinatura de register_for_event para substituir no lugar', () => {
+    expect(optionalEmailMigration).toContain(
+      'create or replace function public.register_for_event(\n  p_event uuid,\n  p_name  text,\n  p_email text,\n  p_phone text default null\n)',
+    )
+  })
+
+  it('e-mail vazio vira NULL; preenchido sem @ ainda é recusado; duplicidade só com e-mail', () => {
+    expect(optionalEmailMigration).toContain("nullif(lower(trim(coalesce(p_email, ''))), '')")
+    expect(optionalEmailMigration).toContain('if email_norm is not null and position')
+    expect(optionalEmailMigration).toContain('if email_norm is not null and exists')
+    expect(optionalEmailMigration).toContain("return 'dados_invalidos'")
+    // a recusa de dados não pode mais disparar só por e-mail ausente: nome continua
+    // obrigatório, e o `for update`/audiência da 0012 continuam na redefinição.
+    expect(optionalEmailMigration).toContain('from public.events where id = p_event for update')
+  })
+})
+
 describe('projeção — o que chega ao navegador', () => {
   it('a lista da equipe é a projeção mais o embed do evento', () => {
     expect(REGISTRATION_SELECT).toEqual([...REGISTRATION_COLUMNS, REGISTRATION_EVENT_EMBED])
@@ -376,12 +402,33 @@ describe('cliente real — consultas e RPCs', () => {
     expect(result).toEqual({ ok: false, error: 'Sem permissão para esta ação na sua igreja.' })
   })
 
-  it('dados inválidos nem chegam ao banco', async () => {
+  it('nome curto nem chega ao banco', async () => {
 
-    const result = await registerForEvent({ eventId: 'e1', name: 'A', email: 'sem-arroba' })
+    const result = await registerForEvent({ eventId: 'e1', name: 'A', email: 'ana@email.test' })
     expect(result.ok).toBe(false)
     expect(result.error).toBe(REGISTER_MESSAGES.dados_invalidos)
     expect(rpc).not.toHaveBeenCalled()
+  })
+
+  it('e-mail preenchido sem @ é recusado antes do banco (0026)', async () => {
+
+    const result = await registerForEvent({ eventId: 'e1', name: 'Ana Souza', email: 'sem-arroba' })
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe(REGISTER_MESSAGES.dados_invalidos)
+    expect(rpc).not.toHaveBeenCalled()
+  })
+
+  it('e-mail opcional: em branco segue para a RPC como nulo e confirma (0026)', async () => {
+
+    rpc.mockResolvedValue({ data: 'confirmed', error: null })
+    const result = await registerForEvent({ eventId: 'e1', name: 'Ana Souza', email: '   ' })
+    expect(rpc).toHaveBeenCalledWith('register_for_event', {
+      p_event: 'e1',
+      p_name: 'Ana Souza',
+      p_email: null,
+      p_phone: null,
+    })
+    expect(result).toEqual({ ok: true, status: 'confirmed' })
   })
 
   it('check-in e cancelamento passam o id da inscrição para as RPCs', async () => {
@@ -452,6 +499,23 @@ describe('loja do fixture — espelha o grupo N', () => {
     const second = demoRegisterForEvent({ eventId: 'e-reg', name: 'Ana de novo', email: 'ANA@duplicada.test' })
     expect(second.error).toBe(REGISTER_MESSAGES.ja_inscrita)
     expect(registrations.filter((r) => r.visitor_email === 'ana@duplicada.test')).toHaveLength(1)
+  })
+
+  it('sem e-mail a inscrição entra e não colide com outra sem e-mail (0026)', () => {
+    eventFixture({ capacity: 2 })
+    const first = demoRegisterForEvent({ eventId: 'e-reg', name: 'Sem Email Um', email: '' })
+    const second = demoRegisterForEvent({ eventId: 'e-reg', name: 'Sem Email Dois', email: '  ' })
+    expect(first.ok).toBe(true)
+    expect(second.ok).toBe(true)
+    expect(registrations.filter((r) => r.visitor_email === null)).toHaveLength(2)
+  })
+
+  it('nome curto ou e-mail malformado são recusados pela loja igual ao cliente (0026)', () => {
+    eventFixture()
+    expect(demoRegisterForEvent({ eventId: 'e-reg', name: 'A', email: 'ana@email.test' }).error)
+      .toBe(REGISTER_MESSAGES.dados_invalidos)
+    expect(demoRegisterForEvent({ eventId: 'e-reg', name: 'Ana Souza', email: 'sem-arroba' }).error)
+      .toBe(REGISTER_MESSAGES.dados_invalidos)
   })
 
   it('capacidade cheia manda para a lista de espera e zera as vagas (N7)', () => {

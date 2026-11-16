@@ -12,14 +12,16 @@ import { registerForEvent } from '@/services/data/registrationService'
 import { formatDate, formatRegistrations, whatsappLink } from '@/utils/format'
 import { absoluteUrl, canWebShare, copyToClipboard, utmLink, webShare, whatsappShareLink } from '@/utils/share'
 import { eventToJsonLd } from '@/utils/seo'
+import { parseVideoUrl, videoProviderLabel } from '@/utils/video'
 import { useDocumentMeta } from '@/hooks/useDocumentMeta'
 
 /**
  * Formulário de inscrição do visitante. Chama `register_for_event` (0012), que é
  * a única porta de escrita em `event_registrations`, e mostra exatamente o estado
- * que o banco confirmou: `confirmed` ou `waitlist`. Nenhum ingresso aparece aqui
- * — o `ticket_code` fica com a equipe, porque quem digitou o e-mail ainda não
- * provou que é dono dele.
+ * que o banco confirmou: `confirmed` ou `waitlist`. O e-mail é opcional (0026): em
+ * branco a inscrição entra sem endereço e sem a anti-duplicidade por e-mail. Nenhum
+ * ingresso aparece aqui — o `ticket_code` fica com a equipe, porque quem digitou o
+ * e-mail ainda não provou que é dono dele.
  */
 function RegisterForm({ eventId, full, onRegistered }: { eventId: string; full: boolean; onRegistered: () => void }) {
   const [name, setName] = useState('')
@@ -66,8 +68,8 @@ function RegisterForm({ eventId, full, onRegistered }: { eventId: string; full: 
       <Field label="Nome completo">
         <Input required minLength={2} value={name} onChange={(e) => setName(e.target.value)} placeholder="Seu nome" />
       </Field>
-      <Field label="E-mail">
-        <Input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nome@exemplo.com" />
+      <Field label="E-mail (opcional)">
+        <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nome@exemplo.com" />
       </Field>
       <Field label="WhatsApp (opcional)">
         <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(12) 99999-0000" />
@@ -233,6 +235,8 @@ export function EventDetailPage() {
             <h2 className="mt-8 text-lg font-semibold text-navy">Sobre o evento</h2>
             <p className="mt-2 whitespace-pre-line text-slate-600">{event.description}</p>
 
+            {event.video_url && <EventVideo url={event.video_url} title={event.name} />}
+
             {church && (
               <div className="mt-8">
                 <h2 className="text-lg font-semibold text-navy">Organizado por</h2>
@@ -366,5 +370,38 @@ function CoverBackdrop({ url, alt }: { url: string; alt: string }) {
       onError={() => setBroken(true)}
       className="absolute inset-0 h-full w-full object-cover"
     />
+  )
+}
+
+/**
+ * Player do vídeo promocional (0024). O iframe é montado a partir do **id
+ * extraído** pela `parseVideoUrl`, nunca da URL crua gravada — e se o valor não
+ * é um padrão jogável (linha anterior ao CHECK, entrada feita por SQL direto),
+ * a tela mostra nada em vez de embutir host desconhecido no visitante.
+ * YouTube entra pelo `youtube-nocookie`: o player oficial planta cookie de
+ * rastreamento antes de qualquer clique, e consentimento de terceiros não é
+ * função que este app exerça.
+ */
+function EventVideo({ url, title }: { url: string; title: string }) {
+  const link = parseVideoUrl(url)
+  if (!link) return null
+  return (
+    <div className="mt-8">
+      <h2 className="text-lg font-semibold text-navy">Vídeo</h2>
+      <div className="mt-3 overflow-hidden rounded-xl border border-line bg-black">
+        <iframe
+          className="aspect-video w-full"
+          src={link.embedUrl}
+          title={`Vídeo do evento ${title}, no ${videoProviderLabel(link.provider)}`}
+          loading="lazy"
+          referrerPolicy="strict-origin-when-cross-origin"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+        />
+      </div>
+      <p className="mt-1.5 text-xs text-slate-400">
+        O vídeo é do {videoProviderLabel(link.provider)}: ao reproduzir, a conversa passa a ser com eles.
+      </p>
+    </div>
   )
 }

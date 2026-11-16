@@ -59,7 +59,7 @@ export function demoRegisterForEvent(input: {
 }): RegistrationResult {
   const name = input.name.trim()
   const email = input.email.trim().toLowerCase()
-  if (name.length < 2 || !email.includes('@')) return { ok: false, error: REGISTER_MESSAGES.dados_invalidos }
+  if (name.length < 2 || (email !== '' && !email.includes('@'))) return { ok: false, error: REGISTER_MESSAGES.dados_invalidos }
 
   const event = events.find((e) => e.id === input.eventId)
   if (!event || event.status !== 'published' || event.visibility !== 'public' || !churchIsOnAir(event.church_id)) {
@@ -68,7 +68,8 @@ export function demoRegisterForEvent(input: {
   if (new Date(event.starts_at).getTime() <= Date.now()) {
     return { ok: false, error: REGISTER_MESSAGES.evento_encerrado }
   }
-  if (registrations.some((r) => r.event_id === event.id && r.visitor_email === email && r.status !== 'cancelled')) {
+  // A anti-duplicidade por e-mail só existe para quem informou endereço (0026).
+  if (email !== '' && registrations.some((r) => r.event_id === event.id && r.visitor_email === email && r.status !== 'cancelled')) {
     return { ok: false, error: REGISTER_MESSAGES.ja_inscrita }
   }
 
@@ -83,7 +84,7 @@ export function demoRegisterForEvent(input: {
     event_name: event.name,
     church_id: event.church_id,
     visitor_name: name,
-    visitor_email: email,
+    visitor_email: email || null,
     visitor_phone: input.phone?.trim() || null,
     status,
     ticket_code: ticketFor(id),

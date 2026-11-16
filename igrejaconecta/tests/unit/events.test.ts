@@ -13,6 +13,7 @@ import {
   EVENT_ORGANIZER_EMBED,
   EVENT_PATCH_COLUMNS,
   EVENT_PUBLISH_DENIED,
+  EVENT_VIDEO_NOT_PLAYABLE,
   EVENTS_MANAGED_COLUMNS,
   EVENTS_MANAGED_SELECT,
   EVENT_COVER_NOT_OURS,
@@ -91,7 +92,7 @@ function managedRow(overrides: Record<string, unknown> = {}) {
   return {
     id: 'ev-real', church_id: 'ch-real', category_id: 'c8', slug: 'vigilia-de-avivamento',
     name: 'Vigília de Avivamento', description: null, starts_at: '2026-12-05T22:00:00Z', ends_at: null,
-    address: null, city: null, cover_url: null, capacity: null, is_free: true, visibility: 'public',
+    address: null, city: null, cover_url: null, video_url: null, capacity: null, is_free: true, visibility: 'public',
     status: 'draft', event_categories: { name: 'Vigílias' },
     ...overrides,
   }
@@ -136,10 +137,15 @@ function hasColumn(block: string, column: string) {
 }
 
 /**
- * Colunas de localização que a migração 0013 acrescenta a `events` por ALTER —
- * não estão no `create table` de 0011, então a existência delas é conferida lá.
+ * Colunas que não nascem no `create table` de 0011: cada uma vem do ALTER da
+ * migração indicada, e a existência delas é conferida lá.
  */
-const EVENT_LOCATION_COLUMNS = ['branch_id', 'latitude', 'longitude']
+const EVENT_ALTERED_COLUMNS: Record<string, string> = {
+  branch_id: '0013_branches_location.sql',
+  latitude: '0013_branches_location.sql',
+  longitude: '0013_branches_location.sql',
+  video_url: '0024_event_video_url.sql',
+}
 
 function migrationText(name: string) {
   return readFileSync(path.resolve(import.meta.dirname, `../../supabase/migrations/${name}`), 'utf8')
@@ -215,21 +221,22 @@ describe('projeção — o que chega ao navegador', () => {
     expect(EVENTS_MANAGED_SELECT).toEqual([...EVENTS_MANAGED_COLUMNS, 'event_categories(name)'])
   })
 
-  it('toda coluna projetada existe na tabela (0011) ou no ALTER de localização (0013)', () => {
+  it('toda coluna projetada existe na tabela (0011) ou no ALTER da migração que a acrescenta', () => {
     const eventsDdl = tableBlock('0011_events.sql', 'events')
     const categoriesDdl = tableBlock('0011_events.sql', 'event_categories')
     for (const column of EVENTS_MANAGED_COLUMNS) {
-      const exists = EVENT_LOCATION_COLUMNS.includes(column)
-        ? addsColumn('0013_branches_location.sql', column)
-        : hasColumn(eventsDdl, column)
+      const migration = EVENT_ALTERED_COLUMNS[column]
+      const exists = migration ? addsColumn(migration, column) : hasColumn(eventsDdl, column)
       expect(exists, `events.${column}`).toBe(true)
     }
     for (const column of EVENT_CATEGORY_COLUMNS) {
       expect(hasColumn(categoriesDdl, column), `event_categories.${column}`).toBe(true)
     }
     expect(hasColumn(eventsDdl, 'registrations_count')).toBe(false)
-    // branch_id não está no create de 0011: quem o acrescenta é o ALTER de 0013.
+    // branch_id e video_url não estão no create de 0011: quem os acrescenta é o ALTER
+    // de 0013 e o de 0024, respectivamente.
     expect(hasColumn(eventsDdl, 'branch_id')).toBe(false)
+    expect(hasColumn(eventsDdl, 'video_url')).toBe(false)
   })
 })
 
@@ -433,6 +440,21 @@ describe('eventos — contrato com o grupo M e a migração 0011', () => {
     expect(m2).toMatch(/get diagnostics n = row_count/)
   })
 
+  it('M11 grava as três formas canônicas e recusa o resto pelo CHECK da 0024', () => {
+    const m11 = caseBlock('m11')
+    // As três formas válidas entram por INSERT, na forma que o banco guarda.
+    for (const url of ['https://www.youtube.com/watch?v=', 'https://youtu.be/', 'https://vimeo.com/']) {
+      expect(m11, `forma canônica ausente do M11: ${url}`).toContain(url)
+    }
+    // Cada recusa só vale se estourar 23514 — seis `check_violation` (http, host
+    // estranho, javascript:, /embed, id curto, canal do Vimeo) — e a recontagem
+    // final pega o que tentasse passar sem erro nenhum.
+    expect(m11.match(/exception when check_violation then null/g)?.length).toBe(6)
+    expect(m11).toContain("'http://")
+    expect(m11).toContain('javascript:')
+    expect(m11).toContain('evil.example.com')
+  })
+
   it('a porta de publicação exige events.publish, é INVOKER e tem search_path fixo', () => {
     const migration = readFileSync(path.resolve(import.meta.dirname, '../../supabase/migrations/0011_events.sql'), 'utf8')
     const definition = migration.match(/create\s+or\s+replace\s+function\s+public\.enforce_event_publish\s*\(\s*\)([\s\S]*?)\bas\s+(\$[\w]*\$)([\s\S]*?)\2\s*;/i)
@@ -573,12 +595,11 @@ describe('escritas — contrato Supabase (cliente simulado)', () => {
     expect(chain.select).toHaveBeenCalledExactlyOnceWith(managedSelect)
   })
 
-  it('toda coluna escrita existe na tabela (0011) ou no ALTER de localização (0013)', () => {
+  it('toda coluna escrita existe na tabela (0011) ou no ALTER da migração que a acrescenta', () => {
     const ddl = tableBlock('0011_events.sql', 'events')
     for (const column of [...EVENT_INSERT_COLUMNS, ...EVENT_PATCH_COLUMNS]) {
-      const exists = EVENT_LOCATION_COLUMNS.includes(column)
-        ? addsColumn('0013_branches_location.sql', column)
-        : hasColumn(ddl, column)
+      const migration = EVENT_ALTERED_COLUMNS[column]
+      const exists = migration ? addsColumn(migration, column) : hasColumn(ddl, column)
       expect(exists, `events.${column}`).toBe(true)
     }
   })
@@ -631,6 +652,10 @@ describe('validação — o que não chega ao banco', () => {
     ['capa que não é http(s)', validDraft({ cover_url: 'javascript:alert(1)' }), EVENT_COVER_NOT_OURS],
     ['capa de outro site', validDraft({ cover_url: 'https://cdn.exemplo.com/capa.png' }), EVENT_COVER_NOT_OURS],
     ['capa de bucket privado', validDraft({ cover_url: 'https://teste.supabase.co/storage/v1/object/public/church-documents/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222.jpg' }), EVENT_COVER_NOT_OURS],
+    ['vídeo sem TLS', validDraft({ video_url: 'http://www.youtube.com/watch?v=dQw4w9WgXcQ' }), EVENT_VIDEO_NOT_PLAYABLE],
+    ['vídeo de serviço que o player não conhece', validDraft({ video_url: 'https://www.tiktok.com/@igreja/video/123' }), EVENT_VIDEO_NOT_PLAYABLE],
+    ['vídeo do YouTube sem id', validDraft({ video_url: 'https://www.youtube.com/watch' }), EVENT_VIDEO_NOT_PLAYABLE],
+    ['vídeo com id curto demais', validDraft({ video_url: 'https://youtu.be/abc' }), EVENT_VIDEO_NOT_PLAYABLE],
     ['latitude fora do intervalo', validDraft({ latitude: 91, longitude: -45.9 }), 'A latitude precisa ser um número entre -90 e 90.'],
     ['longitude fora do intervalo', validDraft({ latitude: -23.2, longitude: 181 }), 'A longitude precisa ser um número entre -180 e 180.'],
     ['só um lado da coordenada', validDraft({ latitude: -23.2, longitude: null }), 'Informe latitude e longitude juntas, ou deixe as duas em branco.'],
@@ -641,6 +666,17 @@ describe('validação — o que não chega ao banco', () => {
   it('coordenada válida e filial da própria igreja passam', () => {
     expect(validateEventDraft(validDraft({ latitude: -23.1857, longitude: -45.8871 }))).toBeNull()
     expect(validateEventDraft(validDraft({ latitude: null, longitude: null }))).toBeNull()
+  })
+
+  it('vídeo das três formas canônicas passa, e o que vai para o banco é a forma do CHECK (0024)', async () => {
+    expect(validateEventDraft(validDraft({ video_url: 'https://youtu.be/dQw4w9WgXcQ' }))).toBeNull()
+    expect(validateEventDraft(validDraft({ video_url: 'https://vimeo.com/76979871' }))).toBeNull()
+    chain.maybeSingle.mockResolvedValue({ data: managedRow(), error: null })
+    await createEvent(validDraft({ video_url: ' https://m.youtube.com/watch?v=dQw4w9WgXcQ&t=5 ' }), { churchId: 'ch-real', role: 'manager' }, 'draft')
+    const enviado = chain.insert.mock.calls[0]![0] as Record<string, unknown>
+    // URL crua com host móvel e parâmetro de tempo nunca chega ao banco: o que se
+    // grava é a forma canônica — a mesma que a página pública usa para montar o embed.
+    expect(enviado.video_url).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ')
   })
 
   it('a validação vale para criar e para editar, e nada é gravado quando falha', () => {
@@ -685,6 +721,16 @@ describe('escritas — loja do fixture (as mesmas recusas do banco)', () => {
     )
     expect(result.ok).toBe(true)
     expect(result.event).toMatchObject({ branch_id: 'b1', latitude: -23.1857, longitude: -45.8871 })
+  })
+
+  it('a loja do fixture grava o vídeo na forma canônica, como o serviço', () => {
+    const result = demoCreateEvent(
+      validDraft({ video_url: 'https://youtu.be/dQw4w9WgXcQ' }),
+      { churchId: 'ch1', role: 'manager' },
+      'draft',
+    )
+    expect(result.ok).toBe(true)
+    expect(result.event!.video_url).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ')
   })
 
   it('filial de outra igreja é recusada — o fixture espelha o trigger enforce_event_branch (O8)', () => {

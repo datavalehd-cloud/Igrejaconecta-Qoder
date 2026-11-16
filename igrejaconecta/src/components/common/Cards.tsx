@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { CalendarDays, MapPin, Church as ChurchIcon, BadgeCheck } from 'lucide-react'
-import type { Church, PublicEvent } from '@/types'
+import { CalendarDays, Clock, MapPin, Church as ChurchIcon, BadgeCheck } from 'lucide-react'
+import type { Church, ChurchServiceTime, PublicEvent } from '@/types'
 import { formatDate } from '@/utils/format'
+import { formatStartsAt, weekdayLabel } from '@/services/data/serviceTimeService'
 import { Badge } from './primitives'
 import { ApprovalBadge, EventStatusBadge } from './StatusBadges'
 
@@ -69,8 +70,10 @@ export function EventCard({ event }: { event: PublicEvent }) {
   )
 }
 
-export function ChurchCard({ church }: { church: Church }) {
+export function ChurchCard({ church, serviceTimes }: { church: Church; serviceTimes?: ChurchServiceTime[] }) {
   const verified = church.approval_status === 'approved'
+  const shown = (serviceTimes ?? []).slice(0, 3)
+  const extra = (serviceTimes?.length ?? 0) - shown.length
   return (
     <div className="flex flex-col overflow-hidden rounded-xl border border-line bg-white shadow-sm">
       <CoverGradient seed={church.id} label={church.denomination ?? undefined} />
@@ -89,6 +92,18 @@ export function ChurchCard({ church }: { church: Church }) {
         <div className="mt-3 space-y-1 text-xs text-slate-500">
           {church.address && <p className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{church.address} — {church.city}/{church.state}</p>}
         </div>
+        {shown.length > 0 && (
+          <div className="mt-3 space-y-1 border-t border-line pt-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Horários dos cultos</p>
+            {shown.map((t) => (
+              <p key={t.id} className="inline-flex items-center gap-1 text-xs text-slate-600">
+                <Clock className="h-3.5 w-3.5 text-brand-600" />
+                {weekdayLabel(t.weekday)} · {formatStartsAt(t.starts_at)} — {t.name}
+              </p>
+            ))}
+            {extra > 0 && <p className="text-[11px] text-slate-400">+{extra} horário(s) no cadastro da igreja</p>}
+          </div>
+        )}
       </div>
     </div>
   )

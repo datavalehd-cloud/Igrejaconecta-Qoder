@@ -3,6 +3,7 @@ import { isOwnStorageImageUrl } from '@/services/data/mediaService'
 import { slugify } from '@/utils/format'
 import { validateLatLng } from '@/utils/geo'
 import { can } from '@/utils/rbac'
+import { parseVideoUrl } from '@/utils/video'
 import type { ChurchEvent, EventCategory, EventOrganizer, EventStatus, EventVisibility, PublicEvent, RoleKey } from '@/types'
 
 /**
@@ -25,7 +26,12 @@ import type { ChurchEvent, EventCategory, EventOrganizer, EventStatus, EventVisi
  * aparece quando não há fonte confirmada.
  */
 
-/** Diretório público: o que o visitante pode ver. `visibility` fica de fora. */
+/**
+ * Diretório público: o que o visitante pode ver. `visibility` fica de fora.
+ * `video_url` está dentro de propósito (decisão 3 da 0024): a coluna existe para
+ * o visitante ver o vídeo, e a cerca continua sendo a política de linha —
+ * rascunho e igreja fora do ar não chegam a ele (casos M1/M4).
+ */
 export const EVENTS_PUBLIC_COLUMNS = [
   'id',
   'church_id',
@@ -38,6 +44,7 @@ export const EVENTS_PUBLIC_COLUMNS = [
   'address',
   'city',
   'cover_url',
+  'video_url',
   'capacity',
   'is_free',
   'status',
@@ -206,6 +213,7 @@ export interface EventDraft {
   address?: string | null
   city?: string | null
   cover_url?: string | null
+  video_url?: string | null
   capacity?: number | null
   visibility: EventVisibility
   branch_id?: string | null
@@ -232,6 +240,7 @@ export const EVENT_INSERT_COLUMNS = [
   'address',
   'city',
   'cover_url',
+  'video_url',
   'capacity',
   'visibility',
   'status',
@@ -254,6 +263,7 @@ export const EVENT_PATCH_COLUMNS = [
   'address',
   'city',
   'cover_url',
+  'video_url',
   'capacity',
   'visibility',
   'branch_id',
@@ -270,6 +280,7 @@ interface NormalizedDraft {
   address: string | null
   city: string | null
   cover_url: string | null
+  video_url: string | null
   capacity: number | null
   visibility: EventVisibility
   branch_id: string | null
@@ -284,6 +295,21 @@ interface NormalizedDraft {
  */
 export const EVENT_COVER_NOT_OURS =
   'A imagem de capa precisa ser um arquivo enviado aqui pelo aplicativo: URL de outro site não é aceita.'
+
+/**
+ * Vídeo é o único link externo que a tela de mídia aceita (0024), e só dos dois
+ * serviços que o player da página pública sabe montar. O CHECK do banco é a
+ * segunda camada; esta régua devolve mensagem legível em vez de 23514 cru.
+ */
+export const EVENT_VIDEO_NOT_PLAYABLE =
+  'O vídeo precisa ser um link do YouTube ou do Vimeo. Ex.: https://www.youtube.com/watch?v=... ou https://vimeo.com/...'
+
+/** Normaliza para a forma canônica do banco; o que a validação segura não deixa chegar cru. Exportado para o espelho demo gravar idêntico. */
+export function canonicalVideoUrl(value?: string | null): string | null {
+  const text = cleanText(value)
+  if (!text) return null
+  return parseVideoUrl(text)?.pageUrl ?? text
+}
 
 export function validateEventDraft(draft: EventDraft): string | null {
   if (draft.name.trim().length < 3) return 'Informe o nome do evento (pelo menos 3 caracteres).'
@@ -303,6 +329,10 @@ export function validateEventDraft(draft: EventDraft): string | null {
   }
   if (draft.cover_url && !isOwnStorageImageUrl(draft.cover_url)) {
     return EVENT_COVER_NOT_OURS
+  }
+  const video = cleanText(draft.video_url)
+  if (video && !parseVideoUrl(video)) {
+    return EVENT_VIDEO_NOT_PLAYABLE
   }
   const coords = validateLatLng(draft.latitude ?? null, draft.longitude ?? null)
   if (coords) return coords
@@ -325,6 +355,7 @@ function normalizeDraft(draft: EventDraft): NormalizedDraft {
     address: cleanText(draft.address),
     city: cleanText(draft.city),
     cover_url: cleanText(draft.cover_url),
+    video_url: canonicalVideoUrl(draft.video_url),
     capacity: draft.capacity ?? null,
     visibility: draft.visibility,
     branch_id: draft.branch_id ?? null,

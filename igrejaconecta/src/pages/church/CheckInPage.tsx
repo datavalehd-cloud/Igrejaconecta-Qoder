@@ -177,7 +177,7 @@ export function CheckInPage() {
                     <div key={r.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
                       <div>
                         <p className="font-medium text-navy">{r.visitor_name}</p>
-                        <p className="text-xs text-slate-500">{r.visitor_email}</p>
+                        <p className="text-xs text-slate-500">{r.visitor_email ?? '—'}</p>
                       </div>
                       <div className="flex items-center gap-2">
                         <code className="rounded bg-surface px-1.5 py-0.5 text-xs text-navy">{r.ticket_code ?? '—'}</code>

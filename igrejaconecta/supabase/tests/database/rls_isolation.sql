@@ -6,8 +6,9 @@
 --   Projeto real (SQL Editor do Supabase):       cole este arquivo inteiro e execute.
 --   Projeto real (CLI, com o projeto linkado):   supabase db query --linked -f supabase/tests/database/rls_isolation.sql
 --
--- Pré-requisito no projeto real: migrações 0001..0021 + seed aplicadas (o bundle
--- supabase/deploy/m7_apply.sql é exatamente o que leva um projeto em 0014 até aqui).
+-- Pré-requisito no projeto real: migrações 0001..0023 + seed aplicadas (o bundle
+-- supabase/deploy/m7_apply.sql leva um projeto em 0014 até a 0021; a 0022 e a 0023
+-- vêm dos arquivos próprios em supabase/migrations).
 -- O arquivo
 -- supabase/tests/local/shim_supabase.sql NÃO é necessário lá (auth.* e storage.*
 -- já existem) e não deve ser executado num projeto Supabase.
@@ -28,7 +29,8 @@
 -- localização da Fase 4 (grupo O) e marketing_campaigns da Fase 5 (grupo P).
 -- Da rodada "sem modo demo": ministérios e redes sociais da igreja (grupo Q),
 -- favoritos e preferências do visitante (grupo R), redes de igrejas (grupo S),
--- suporte com tickets e mensagens (grupo T) e eventos de segurança (grupo U).
+-- suporte com tickets e mensagens (grupo T), eventos de segurança (grupo U) e
+-- horários de culto da vitrine pública (grupo V, 0023).
 -- ============================================================================
 
 begin;
@@ -2253,6 +2255,9 @@ rollback to savepoint l5;
 --   * editar a linha certa com o campo errado também é: mover o evento de igreja
 --     esbarra no WITH CHECK, não no USING (M10) — o que o formulário de edição
 --     passa a tentar assim que existe;
+--   * vídeo promocional é URL canônica de YouTube ou Vimeo, ou nulo: o CHECK da
+--     0024 recusa o resto antes de tocar a linha (M11) — a página pública monta
+--     o iframe só a partir do que passa por ali;
 --   * as projeções do app são nomes de coluna reais (M1/M3/M8). Se uma migração
 --     renomear uma coluna que a tela seleciona, a suíte quebra aqui em vez de
 --     estourar em produção.
@@ -2335,7 +2340,7 @@ declare with_filter int; without_filter int;
 begin
   select count(*) into with_filter from (
     select id, church_id, category_id, slug, name, description, starts_at, ends_at,
-           address, city, cover_url, capacity, is_free, status
+           address, city, cover_url, video_url, capacity, is_free, status
     from public.events
     where status = 'published' and visibility = 'public'
   ) d;
@@ -2345,7 +2350,7 @@ begin
 
   select count(*) into without_filter from (
     select id, church_id, category_id, slug, name, description, starts_at, ends_at,
-           address, city, cover_url, capacity, is_free, status
+           address, city, cover_url, video_url, capacity, is_free, status
     from public.events
   ) d;
   if without_filter <> 2 then
@@ -2410,7 +2415,7 @@ declare own int; all_visible int;
 begin
   select count(*) into own from (
     select id, church_id, category_id, slug, name, description, starts_at, ends_at,
-           address, city, cover_url, capacity, is_free, visibility, status,
+           address, city, cover_url, video_url, capacity, is_free, visibility, status,
            branch_id, latitude, longitude
     from public.events
     where church_id = current_setting('app.church_a')::uuid
@@ -2723,6 +2728,106 @@ begin
   end if;
 end $$;
 rollback to savepoint m10;
+
+-- M11: o CHECK de vídeo (0024). A coluna aceita nulo — "sem vídeo" é estado
+-- honesto — e as três formas canônicas que o player da página pública sabe
+-- montar. Todo o resto (http, host estranho, `javascript:`, até a rota /embed do
+-- próprio YouTube e o id curto) é recusado com 23514 antes de tocar a linha. O
+-- app normaliza na entrada (`canonicalVideoUrl`); este caso prova que a cerca
+-- vale também para quem escreve por SQL direto, contornando o formulário.
+savepoint m11;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int;
+begin
+  -- As três formas válidas entram; nulo também (vídeo é opcional).
+  insert into public.events (church_id, category_id, slug, name, starts_at, status, video_url)
+  values (current_setting('app.church_a')::uuid,
+          (select id from public.event_categories where slug = 'jovens'),
+          'm11-youtube', 'Video no YouTube', '2026-12-20T19:00:00-03:00', 'draft',
+          'https://www.youtube.com/watch?v=dQw4w9WgXcQ'),
+         (current_setting('app.church_a')::uuid,
+          (select id from public.event_categories where slug = 'jovens'),
+          'm11-youtu-be', 'Link curto do YouTube', '2026-12-21T19:00:00-03:00', 'draft',
+          'https://youtu.be/dQw4w9WgXcQ'),
+         (current_setting('app.church_a')::uuid,
+          (select id from public.event_categories where slug = 'jovens'),
+          'm11-vimeo', 'Video no Vimeo', '2026-12-22T19:00:00-03:00', 'draft',
+          'https://vimeo.com/76979871'),
+         (current_setting('app.church_a')::uuid,
+          (select id from public.event_categories where slug = 'jovens'),
+          'm11-sem-video', 'Sem video promocional', '2026-12-23T19:00:00-03:00', 'draft',
+          null);
+
+  select count(*) into n from public.events where slug like 'm11-%';
+  if n <> 4 then
+    raise exception 'RLS-FALHA M11: das 4 formas validas (3 canonicas + nulo), entraram %', n;
+  end if;
+
+  -- Cada recusa abaixo tem de estourar 23514. Se alguma passar, o CHECK afrouxou
+  -- — e a pagina publica embutiria num iframe exatamente o que ele recusa.
+  begin
+    insert into public.events (church_id, category_id, slug, name, starts_at, status, video_url)
+    values (current_setting('app.church_a')::uuid,
+            (select id from public.event_categories where slug = 'jovens'),
+            'm11-http', 'Sem TLS', '2026-12-24T19:00:00-03:00', 'draft',
+            'http://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    raise exception 'RLS-FALHA M11: video http:// foi aceito';
+  exception when check_violation then null; end;
+
+  begin
+    insert into public.events (church_id, category_id, slug, name, starts_at, status, video_url)
+    values (current_setting('app.church_a')::uuid,
+            (select id from public.event_categories where slug = 'jovens'),
+            'm11-evil', 'Host estranho', '2026-12-24T19:00:00-03:00', 'draft',
+            'https://evil.example.com/watch?v=dQw4w9WgXcQ');
+    raise exception 'RLS-FALHA M11: video de host desconhecido foi aceito';
+  exception when check_violation then null; end;
+
+  begin
+    insert into public.events (church_id, category_id, slug, name, starts_at, status, video_url)
+    values (current_setting('app.church_a')::uuid,
+            (select id from public.event_categories where slug = 'jovens'),
+            'm11-js', 'Payload javascript:', '2026-12-24T19:00:00-03:00', 'draft',
+            'javascript:alert(1)');
+    raise exception 'RLS-FALHA M11: javascript: no video_url foi aceito';
+  exception when check_violation then null; end;
+
+  begin
+    insert into public.events (church_id, category_id, slug, name, starts_at, status, video_url)
+    values (current_setting('app.church_a')::uuid,
+            (select id from public.event_categories where slug = 'jovens'),
+            'm11-embed', 'Forma nao-canonica do YouTube', '2026-12-24T19:00:00-03:00', 'draft',
+            'https://www.youtube.com/embed/dQw4w9WgXcQ');
+    raise exception 'RLS-FALHA M11: /embed do YouTube foi aceito (so a forma de pagina vale)';
+  exception when check_violation then null; end;
+
+  begin
+    insert into public.events (church_id, category_id, slug, name, starts_at, status, video_url)
+    values (current_setting('app.church_a')::uuid,
+            (select id from public.event_categories where slug = 'jovens'),
+            'm11-curto', 'Id curto demais', '2026-12-24T19:00:00-03:00', 'draft',
+            'https://youtu.be/abc');
+    raise exception 'RLS-FALHA M11: id de 3 caracteres no youtu.be foi aceito';
+  exception when check_violation then null; end;
+
+  begin
+    insert into public.events (church_id, category_id, slug, name, starts_at, status, video_url)
+    values (current_setting('app.church_a')::uuid,
+            (select id from public.event_categories where slug = 'jovens'),
+            'm11-canal', 'Vimeo de outra rota', '2026-12-24T19:00:00-03:00', 'draft',
+            'https://vimeo.com/channels/staffpicks');
+    raise exception 'RLS-FALHA M11: pagina de canal do Vimeo foi aceita como video';
+  exception when check_violation then null; end;
+
+  -- Nada do que foi recusado deixou linha: os slugs rejeitados estão livres.
+  select count(*) into n from public.events where slug like 'm11-%';
+  if n <> 4 then
+    raise exception 'RLS-FALHA M11: apos as recusas ha % linhas m11-*, esperava as mesmas 4', n;
+  end if;
+end $$;
+rollback to savepoint m11;
 
 -- ---------------------------------------------------------------------------
 -- GRUPO N — inscrições (0012): escrita por visitante anon, capacidade, check-in
@@ -3316,7 +3421,12 @@ rollback to savepoint n15;
 --     é membro das duas e administra só uma, USING silencioso para quem é de
 --     fora);
 --   * SuperAdmin atravessa igrejas para ler e escrever (O6);
---   * excluir não existe: sem política e sem grant, nem o SuperAdmin apaga (O7);
+--   * excluir filial é a mesma régua de cadastrar — `church.manage` apaga a
+--     própria; gerente e igreja alheia apagam zero linhas em silêncio (sem
+--     oráculo de existência), e o SuperAdmin apaga em qualquer uma (O7, aberto
+--     pela 0025);
+--   * excluir filial não apaga evento nem horário: as duas FKs são
+--     `on delete set null` e as linhas sobrevivem como "sem filial" (O11, O12);
 --   * `events.branch_id` de outra igreja é recusado com a MESMA mensagem e o
 --     MESMO SQLSTATE de uma filial inexistente (O8) — sem oráculo de existência
 --     — e trocar a igreja de um evento já vinculado também esbarra no trigger;
@@ -3324,8 +3434,8 @@ rollback to savepoint n15;
 --     aceito: endereço sem GPS é estado honesto, o mapa diz "não plotada" em vez
 --     de inventar posição;
 --   * guardas estruturais (O10): trigger DEFINER com search_path fixo e sem
---     EXECUTE público, ausência de delete, WITH CHECK real e as colunas que o
---     app projeta.
+--     EXECUTE público, política e grant de delete só para quem pode, WITH CHECK
+--     real e as colunas que o app projeta.
 -- ---------------------------------------------------------------------------
 
 -- Fixtures do grupo. a4 é membro `invited` da igreja A: papel com church.manage
@@ -3657,42 +3767,86 @@ begin
 end $$;
 rollback to savepoint o6;
 
--- O7: excluir filial não está aberto. As duas respostas possíveis são corretas e
--- este caso aceita ambas: sem grant de delete a consulta é recusada antes
--- (42501); com grant e sem política de delete o default-deny apaga zero linhas
--- em silêncio. O que não é aceitável é a linha sumir — e é isso que se mede.
--- Quem detecta o grant em si é o O10, não este caso.
--- O único caminho de remoção é o backend (service_role) ou o cascade da igreja,
--- e abrir isso é decisão de produto, não de migração.
+-- O7: excluir filial (0025) é a mesma régua de cadastrar — `church.manage`. A
+-- camada que recusa depende de quem tenta: gerente e igreja alheia TÊM o grant
+-- de delete, então não estoura 42501 — o USING da política é falso e a frase
+-- afeta zero linhas em silêncio, sem oráculo de existência. church_admin apaga
+-- a própria, e o SuperAdmin apaga em qualquer igreja porque `is_superadmin()` já
+-- mora dentro do `has_church_permission` (0001) — política nenhuma precisa citá-
+-- lo. O que NUNCA é aceitável: linha sumir de quem não pode (a contagem depois
+-- de cada recusa é a prova) ou ficar de pé quando pode.
 savepoint o7;
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
 do $$
 declare n int;
 begin
-  begin
-    delete from public.church_branches where id = current_setting('app.branch_a_sede')::uuid;
-    get diagnostics n = row_count;
-    if n <> 0 then raise exception 'RLS-FALHA O7: church_admin apagou filial (% linhas)', n; end if;
-  exception when insufficient_privilege then null; end;
+  delete from public.church_branches where id = current_setting('app.branch_a_zs')::uuid;
+  get diagnostics n = row_count;
+  if n <> 1 then
+    raise exception 'RLS-FALHA O7: church_admin apagando a propria filial devolveu % linhas, esperava 1', n;
+  end if;
 
-  select count(*) into n from public.church_branches where id = current_setting('app.branch_a_sede')::uuid;
-  if n <> 1 then raise exception 'RLS-FALHA O7: a filial sumiu depois da tentativa de delete'; end if;
+  select count(*) into n from public.church_branches where id = current_setting('app.branch_a_zs')::uuid;
+  if n <> 0 then raise exception 'RLS-FALHA O7: a filial apagada continua na tabela'; end if;
 end $$;
 
+-- Gerente da A (events.manage, sem church.manage): grant tem, política nega —
+-- zero linhas, sede intacta.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a2'))::text, true);
+do $$
+declare n int;
+begin
+  delete from public.church_branches where id = current_setting('app.branch_a_sede')::uuid;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'RLS-FALHA O7: gerente sem church.manage apagou % filial(is) da A', n; end if;
+
+  select count(*) into n from public.church_branches where id = current_setting('app.branch_a_sede')::uuid;
+  if n <> 1 then raise exception 'RLS-FALHA O7: a sede sumiu depois da tentativa do gerente'; end if;
+end $$;
+
+-- Admin da B: a dele apaga (1), a da A não (0, silêncio — mesma resposta de
+-- "não existe", sem oráculo). A integridade da sede é conferida DEPOIS pelo a1:
+-- uma contagem feita pelo próprio b1 daria zero dos dois jeitos, porque a
+-- leitura também é por igreja — ela não provaria nada.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_b1'))::text, true);
+do $$
+declare n int;
+begin
+  delete from public.church_branches where id = current_setting('app.branch_a_sede')::uuid;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'RLS-FALHA O7: admin da B apagou filial da A (% linhas)', n; end if;
+
+  delete from public.church_branches where id = current_setting('app.branch_b_1')::uuid;
+  get diagnostics n = row_count;
+  if n <> 1 then
+    raise exception 'RLS-FALHA O7: admin da B apagando a propria filial devolveu % linhas, esperava 1', n;
+  end if;
+end $$;
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int;
+begin
+  select count(*) into n from public.church_branches where id = current_setting('app.branch_a_sede')::uuid;
+  if n <> 1 then raise exception 'RLS-FALHA O7: a sede da A sumiu depois da tentativa do admin da B'; end if;
+end $$;
+
+-- SuperAdmin: apaga a sede da A apesar de ser membro só da B — a régua é a
+-- permissão, e a permissão dele é transversal.
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_su'))::text, true);
 do $$
 declare n int;
 begin
-  begin
-    delete from public.church_branches where id = current_setting('app.branch_b_1')::uuid;
-    get diagnostics n = row_count;
-    if n <> 0 then raise exception 'RLS-FALHA O7: superadmin apagou filial pela API (% linhas)', n; end if;
-  exception when insufficient_privilege then null; end;
-
-  select count(*) into n from public.church_branches where id = current_setting('app.branch_b_1')::uuid;
-  if n <> 1 then raise exception 'RLS-FALHA O7: a filial da B sumiu depois da tentativa do superadmin'; end if;
+  delete from public.church_branches where id = current_setting('app.branch_a_sede')::uuid;
+  get diagnostics n = row_count;
+  if n <> 1 then
+    raise exception 'RLS-FALHA O7: superadmin apagando filial da A devolveu % linhas, esperava 1', n;
+  end if;
 end $$;
 rollback to savepoint o7;
 
@@ -3854,6 +4008,78 @@ begin
 end $$;
 rollback to savepoint o9;
 
+-- O11: excluir a filial NÃO apaga o evento vinculado. A FK `events.branch_id`
+-- (0013) é `on delete set null`: o evento perde a filial e mantém o resto da
+-- vida — status, visibilidade, slug e a página pública no ar. A tela de Filiais
+-- avisa exatamente isso antes de confirmar, e é isto que ela cumpre.
+savepoint o11;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int; alvo uuid;
+begin
+  insert into public.events (church_id, category_id, slug, name, starts_at, status, visibility, branch_id)
+  values (current_setting('app.church_a')::uuid,
+          (select id from public.event_categories where slug = 'jovens'),
+          'o11-com-filial', 'Culto na Congregacao Zona Sul', '2026-12-06T19:00:00-03:00',
+          'published', 'public', current_setting('app.branch_a_zs')::uuid)
+  returning id into alvo;
+  if alvo is null then raise exception 'RLS-FALHA O11: evento de fixture nao entrou'; end if;
+
+  delete from public.church_branches where id = current_setting('app.branch_a_zs')::uuid;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA O11: delete da filial pelo church.manage devolveu % linhas', n; end if;
+
+  select count(*) into n from public.events
+  where id = alvo and branch_id is null and status = 'published' and visibility = 'public';
+  if n <> 1 then
+    raise exception 'RLS-FALHA O11: o evento nao sobreviveu "sem filial" e publicado (% linhas certas)', n;
+  end if;
+end $$;
+
+-- O visitante continua vendo o evento órfão de filial: o `set null` não tirou
+-- nada do ar.
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon","sub":null}', true);
+do $$
+declare n int;
+begin
+  select count(*) into n from public.events
+  where slug = 'o11-com-filial' and status = 'published' and visibility = 'public';
+  if n <> 1 then
+    raise exception 'RLS-FALHA O11: anon nao le o evento que sobreviveu ao delete da filial (% linhas)', n;
+  end if;
+end $$;
+rollback to savepoint o11;
+
+-- O12: o mesmo com o horário de culto (0023): `on delete set null` preserva a
+-- memória do encontro. Diferente do V9 — que apaga via service_role para medir a
+-- FK isolada da política — este caso prova que o caminho autenticado do app
+-- (church.manage) também preserva a linha, sem filial.
+savepoint o12;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int; alvo uuid;
+begin
+  insert into public.church_service_times (church_id, branch_id, weekday, starts_at, name)
+  values (current_setting('app.church_a')::uuid, current_setting('app.branch_a_zs')::uuid,
+          6, '18:00', 'Culto da Zona Sul')
+  returning id into alvo;
+  if alvo is null then raise exception 'RLS-FALHA O12: horario de fixture nao entrou'; end if;
+
+  delete from public.church_branches where id = current_setting('app.branch_a_zs')::uuid;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA O12: delete pelo church.manage devolveu % linhas', n; end if;
+
+  select count(*) into n from public.church_service_times
+  where id = alvo and branch_id is null;
+  if n <> 1 then
+    raise exception 'RLS-FALHA O12: o horario nao sobreviveu "sem filial" ao delete autenticado (% linhas certas)', n;
+  end if;
+end $$;
+rollback to savepoint o12;
+
 -- O10: guardas estruturais. Os casos acima provam comportamento; estes provam
 -- que a estrutura que os produz não mudou por baixo deles.
 savepoint o10;
@@ -3913,17 +4139,35 @@ begin
     raise exception 'RLS-FALHA O10: church_branches ficou sem o trigger de updated_at';
   end if;
 
-  -- Exclusão fechada nas duas camadas.
+  -- Delete aberto NAS DUAS CAMADAS, do jeito que a 0025 decidiu: uma política
+  -- DELETE cujo USING é a régua church.manage, o grant para authenticated e
+  -- nada para anon. As duas metades importam: sem grant a política é letra morta
+  -- (42501 antes dela), e sem política o grant apaga o que a linha deixar.
   select count(*) into n from pg_policies
   where schemaname = 'public' and tablename = 'church_branches' and cmd = 'DELETE';
-  if n <> 0 then
-    raise exception 'RLS-FALHA O10: apareceu % política(s) de delete em church_branches', n;
+  if n <> 1 then
+    raise exception 'RLS-FALHA O10: % politica(s) de delete em church_branches, esperava exatamente 1 (0025)', n;
   end if;
+
+  select count(*) into n from pg_policies
+  where schemaname = 'public' and tablename = 'church_branches' and cmd = 'DELETE'
+    and qual like '%has_church_permission%' and qual like '%church.manage%';
+  if n <> 1 then
+    raise exception 'RLS-FALHA O10: a politica DELETE de church_branches deixou de ser a regua church.manage';
+  end if;
+
   select count(*) into n from information_schema.role_table_grants
   where table_schema = 'public' and table_name = 'church_branches'
-    and privilege_type = 'DELETE' and grantee in ('anon', 'authenticated');
+    and privilege_type = 'DELETE' and grantee = 'authenticated';
+  if n <> 1 then
+    raise exception 'RLS-FALHA O10: authenticated sem o grant de DELETE de church_branches que a 0025 deu (% linhas)', n;
+  end if;
+
+  select count(*) into n from information_schema.role_table_grants
+  where table_schema = 'public' and table_name = 'church_branches'
+    and privilege_type = 'DELETE' and grantee = 'anon';
   if n <> 0 then
-    raise exception 'RLS-FALHA O10: % grant(s) de DELETE em church_branches para anon/authenticated', n;
+    raise exception 'RLS-FALHA O10: anon recebeu grant de DELETE em church_branches (% linhas)', n;
   end if;
 
   -- WITH CHECK real nas duas escritas. `trim(...) <> 'true'` é a rede
@@ -3948,11 +4192,11 @@ begin
   end if;
 
   select string_agg(f, ', ' order by f) into faltando
-  from unnest(array['branch_id','latitude','longitude']) f
+  from unnest(array['branch_id','latitude','longitude','video_url']) f
   where not exists (select 1 from information_schema.columns c
                     where c.table_schema = 'public' and c.table_name = 'events' and c.column_name = f);
   if faltando is not null then
-    raise exception 'RLS-FALHA O10: colunas de localizacao sumiram de events: %', faltando;
+    raise exception 'RLS-FALHA O10: colunas de localizacao/video sumiram de events: %', faltando;
   end if;
 
   -- Seis CHECKs de intervalo: lat/lng em churches e church_branches, latitude/
@@ -5774,6 +6018,488 @@ begin
   if n <> 2 then raise exception 'RLS-FALHA U4: faltam views de monitoramento (% encontradas)', n; end if;
 end $$;
 rollback to savepoint u4;
+
+-- ---------------------------------------------------------------------------
+-- GRUPO V — horarios de culto (0023): a vitrine publica do cadastro.
+--
+-- O que este grupo garante:
+--   * anon le os horarios das igrejas aprovadas e ativas — e SOMENTE esses.
+--     A politica de leitura da 0023 espelha `churches_public_read` (0002): o
+--     horario existe para aparecer no perfil publico e no mapa, entao a recusa
+--     a igreja pendente e a unica cerca entre "vitrine" e "lixo" (V1, V3);
+--   * anon nao escreve: o grant da tabela e select puro, a recusa vem antes da
+--     RLS (V1);
+--   * membro de igreja pendente administra a PROPRIA igreja antes da aprovacao
+--     (V3) — `has_church_permission` nao pergunta `approval_status`, e e isso
+--     que deixa o cadastro pronto para publicar;
+--   * quem nao tem `church.manage` nao insere (42501), e update/delete sem
+--     USING estouram em zero linhas em silencio: o caso mede as duas respostas
+--     (V4), como em filiais;
+--   * church_admin cria, edita (com o carimbo `updated_at` que o trigger move)
+--     e apaga na propria igreja; na vizinha e na pendente nao toca nada (V5);
+--   * SuperAdmin le e escreve em qualquer igreja, inclusive as pendentes (V6);
+--   * os CHECKs recusam weekday fora de 0..6 e nome fora de 2..80 (V7) — a
+--     validacao do app e conveniencia, a do banco e a cerca;
+--   * filial de outra igreja no horario e recusada pelo trigger com 42501, na
+--     entrada e na mudanca, inclusive a troca da igreja do horario (V8); e
+--     apagar a filial NAO apaga o horario: `on delete set null` preserva a
+--     memoria do culto que ali acontecia (V9);
+--   * guardas estruturais (V10): funcao DEFINER com search_path fixo e sem
+--     EXECUTE publico, os dois triggers attachados, os DELETEs da FK (cascade
+--     na igreja, set null na filial), os grants exatamente como a migração
+--     declara e os tipos que o servico espera (smallint / time).
+-- ---------------------------------------------------------------------------
+
+-- Fixtures do grupo. ac administra a igreja C (pendente): e ela que V3 usa para
+-- medir "membro le antes da aprovacao" sem depender da vitrine. Os horarios de
+-- A e B caem no intervalo aprovado+ativo; o de C nao, e essa diferenca e o
+-- coracao do grupo. branch_a_sede/branch_a_zs sao as filiais do grupo O.
+select set_config('app.user_ac',   'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaac', false);
+select set_config('app.time_a_1',  '99999999-0000-4023-8000-0000000000a1', false);
+select set_config('app.time_a_2',  '99999999-0000-4023-8000-0000000000a2', false);
+select set_config('app.time_b_1',  '99999999-0000-4023-8000-0000000000b1', false);
+select set_config('app.time_c_1',  '99999999-0000-4023-8000-0000000000c1', false);
+
+insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at) values
+  (current_setting('app.user_ac')::uuid, 'ac@igreja-c.test', '{"full_name":"Administrador C"}'::jsonb, now());
+
+insert into public.church_members (church_id, user_id, role_id, status) values
+  (current_setting('app.church_c')::uuid, current_setting('app.user_ac')::uuid,
+   (select id from public.roles where key = 'church_admin'), 'active');
+
+insert into public.church_service_times (id, church_id, branch_id, weekday, starts_at, name) values
+  (current_setting('app.time_a_1')::uuid, current_setting('app.church_a')::uuid, null, 0, '09:00', 'Culto da Familia'),
+  (current_setting('app.time_a_2')::uuid, current_setting('app.church_a')::uuid,
+   current_setting('app.branch_a_sede')::uuid, 3, '19:30', 'Culto de Oracao'),
+  (current_setting('app.time_b_1')::uuid, current_setting('app.church_b')::uuid, null, 6, '18:00', 'Culto da Juventude'),
+  -- Igreja C esta pendente e inativa: este horario e o que a vitrine NUNCA pode mostrar.
+  (current_setting('app.time_c_1')::uuid, current_setting('app.church_c')::uuid, null, 1, '20:00', 'Estudo Biblico');
+
+-- Sonda anti-no-op do grupo inteiro: sem os fixtures abaixo, todo "nao le" passa
+-- verde sem medir nada.
+do $$
+declare n int;
+begin
+  select count(*) into n from public.church_service_times
+  where id in (current_setting('app.time_a_1')::uuid, current_setting('app.time_a_2')::uuid,
+               current_setting('app.time_b_1')::uuid, current_setting('app.time_c_1')::uuid);
+  if n <> 4 then
+    raise exception 'RLS-FALHA V-sonda: esperava 4 horarios de fixture, encontrei %', n;
+  end if;
+end $$;
+
+-- V1: a vitrine do visitante. anon le os tres horarios das igrejas abertas e
+-- nenhum da pendente; e nao escreve nada — o grant e select puro, a recusa vem
+-- antes da politica.
+savepoint v1;
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon","sub":null}', true);
+do $$
+declare n int;
+begin
+  select count(*) into n from public.church_service_times
+  where id in (current_setting('app.time_a_1')::uuid, current_setting('app.time_a_2')::uuid,
+               current_setting('app.time_b_1')::uuid);
+  if n <> 3 then
+    raise exception 'RLS-FALHA V1: anon deveria ler os 3 horarios das igrejas abertas, leu %', n;
+  end if;
+
+  select count(*) into n from public.church_service_times
+  where church_id = current_setting('app.church_c')::uuid;
+  if n <> 0 then
+    raise exception 'RLS-FALHA V1: anon leu % horario(s) de igreja pendente — a vitrine vazou o cadastro', n;
+  end if;
+
+  begin
+    insert into public.church_service_times (church_id, weekday, starts_at, name)
+    values (current_setting('app.church_a')::uuid, 5, '21:00', 'Horario do invasor');
+    raise exception 'RLS-FALHA V1: anon inseriu horario direto na tabela';
+  exception when insufficient_privilege then null; end;
+
+  begin
+    update public.church_service_times set name = 'Renomeado pelo anon'
+    where id = current_setting('app.time_a_1')::uuid;
+    raise exception 'RLS-FALHA V1: anon editou horario da vitrine';
+  exception when insufficient_privilege then null; end;
+
+  begin
+    delete from public.church_service_times where id = current_setting('app.time_a_1')::uuid;
+    raise exception 'RLS-FALHA V1: anon apagou horario da vitrine';
+  exception when insufficient_privilege then null; end;
+end $$;
+rollback to savepoint v1;
+
+-- V2: visitante logado sem vinculo ve exatamente a vitrine de anon — a politica
+-- nao abre nada extra para `authenticated` sem igreja.
+savepoint v2;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_out'))::text, true);
+do $$
+declare n int;
+begin
+  select count(*) into n from public.church_service_times
+  where id in (current_setting('app.time_a_1')::uuid, current_setting('app.time_a_2')::uuid,
+               current_setting('app.time_b_1')::uuid);
+  if n <> 3 then
+    raise exception 'RLS-FALHA V2: visitante logado leu % dos 3 horarios publicos', n;
+  end if;
+
+  select count(*) into n from public.church_service_times
+  where church_id = current_setting('app.church_c')::uuid;
+  if n <> 0 then
+    raise exception 'RLS-FALHA V2: visitante logado leu % horario(s) de igreja pendente', n;
+  end if;
+end $$;
+rollback to savepoint v2;
+
+-- V3: membro le a propria igreja ANTES da aprovacao (ramo de membership, nao o
+-- da vitrine) e pode administra-la; quem e de fora continua sem ver a pendente.
+savepoint v3;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_ac'))::text, true);
+do $$
+declare n int;
+begin
+  select count(*) into n from public.church_service_times
+  where id = current_setting('app.time_c_1')::uuid;
+  if n <> 1 then
+    raise exception 'RLS-FALHA V3: admin da C nao leu o horario da propria igreja pendente (% linhas)', n;
+  end if;
+
+  -- A vitrine continua valendo para ele (le A e B pelo ramo publico).
+  select count(*) into n from public.church_service_times
+  where id in (current_setting('app.time_a_1')::uuid, current_setting('app.time_a_2')::uuid,
+               current_setting('app.time_b_1')::uuid);
+  if n <> 3 then
+    raise exception 'RLS-FALHA V3: admin da C perdeu a leitura publica (% dos 3)', n;
+  end if;
+
+  -- E escreve na propria igreja mesmo pendente: o cadastro nasce antes do "ok"
+  -- da plataforma — e exatamente assim que a igreja chega pronta para aprovar.
+  insert into public.church_service_times (church_id, weekday, starts_at, name)
+  values (current_setting('app.church_c')::uuid, 4, '19:00', 'Culto de Libertacao');
+  select count(*) into n from public.church_service_times
+  where church_id = current_setting('app.church_c')::uuid and name = 'Culto de Libertacao';
+  if n <> 1 then
+    raise exception 'RLS-FALHA V3: admin da C nao conseguiu cadastrar horario na propria igreja (% linhas)', n;
+  end if;
+end $$;
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_b1'))::text, true);
+do $$
+declare n int;
+begin
+  select count(*) into n from public.church_service_times
+  where church_id = current_setting('app.church_c')::uuid;
+  if n <> 0 then
+    raise exception 'RLS-FALHA V3: admin da B leu % horario(s) da igreja pendente C', n;
+  end if;
+end $$;
+rollback to savepoint v3;
+
+-- V4: escrever e church.manage. O gerente a2 le a vitrine da propria igreja, mas
+-- insert estoura 42501 e update/delete sem USING afetam zero linhas — medir as
+-- duas respostas, porque o silencio do UPDATE tambem e uma porta.
+savepoint v4;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a2'))::text, true);
+do $$
+declare n int;
+begin
+  begin
+    insert into public.church_service_times (church_id, weekday, starts_at, name)
+    values (current_setting('app.church_a')::uuid, 5, '20:00', 'Horario do gerente');
+    raise exception 'RLS-FALHA V4: manager (sem church.manage) cadastrou horario na propria igreja';
+  exception when insufficient_privilege then null; end;
+
+  update public.church_service_times set name = 'Renomeado pelo gerente'
+  where id = current_setting('app.time_a_1')::uuid;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'RLS-FALHA V4: manager renomeou horario (% linhas)', n; end if;
+
+  delete from public.church_service_times where id = current_setting('app.time_a_1')::uuid;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'RLS-FALHA V4: manager apagou horario (% linhas)', n; end if;
+
+  -- Sonda: a recusa e de permissao, nao de sessão quebrada — ele continua lendo.
+  select count(*) into n from public.church_service_times
+  where id in (current_setting('app.time_a_1')::uuid, current_setting('app.time_a_2')::uuid);
+  if n <> 2 then raise exception 'RLS-FALHA V4: sonda — o gerente perdeu a leitura da propria igreja (% linhas)', n; end if;
+end $$;
+
+-- Quem nao e de igreja nenhuma tambem nao insere na A (o WITH CHECK pergunta a
+-- membership, nao a boa vontade do cliente).
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_out'))::text, true);
+do $$
+begin
+  begin
+    insert into public.church_service_times (church_id, weekday, starts_at, name)
+    values (current_setting('app.church_a')::uuid, 5, '22:00', 'Horario do estranho');
+    raise exception 'RLS-FALHA V4: usuario sem vinculo cadastrou horario na igreja A';
+  exception when insufficient_privilege then null; end;
+end $$;
+rollback to savepoint v4;
+
+-- V5: o administrador faz os tres movimentos na propria igreja — cria, edita (o
+-- trigger de carimbo move o updated_at sozinho, mesmo contra a vontade de quem
+-- edita) e apaga. Na igreja vizinha e na pendente, nem um update nem um delete
+-- alcançam: zero linhas, sem oraculo.
+savepoint v5;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int; carimbo timestamptz;
+begin
+  insert into public.church_service_times (church_id, weekday, starts_at, name)
+  values (current_setting('app.church_a')::uuid, 2, '10:00', 'Escola Dominical');
+  select count(*) into n from public.church_service_times
+  where church_id = current_setting('app.church_a')::uuid and name = 'Escola Dominical';
+  if n <> 1 then raise exception 'RLS-FALHA V5: church_admin da A nao criou horario (% linhas)', n; end if;
+
+  -- O UPDATE tenta cravar um updated_at velho; quem manda e o trigger.
+  update public.church_service_times
+     set name = 'Culto de Oracao da Sede', updated_at = '2020-01-01T00:00:00Z'
+   where id = current_setting('app.time_a_2')::uuid;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA V5: church_admin da A nao editou o proprio horario (% linhas)', n; end if;
+
+  select updated_at into carimbo from public.church_service_times
+  where id = current_setting('app.time_a_2')::uuid;
+  if carimbo < '2021-01-01T00:00:00Z' then
+    raise exception 'RLS-FALHA V5: touch_updated_at nao moveu o carimbo (%), o app gravou a vontade do cliente', carimbo;
+  end if;
+
+  update public.church_service_times set name = 'Ateado da vizinha'
+  where id = current_setting('app.time_b_1')::uuid;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'RLS-FALHA V5: a1 editou horario da igreja B (% linhas)', n; end if;
+
+  delete from public.church_service_times where id = current_setting('app.time_b_1')::uuid;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'RLS-FALHA V5: a1 apagou horario da igreja B (% linhas)', n; end if;
+
+  delete from public.church_service_times where id = current_setting('app.time_c_1')::uuid;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'RLS-FALHA V5: a1 apagou horario da igreja pendente C (% linhas)', n; end if;
+end $$;
+
+-- b1 apaga o que e dele: o delete existe de proposito (decisao 5 da 0023).
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_b1'))::text, true);
+do $$
+declare n int;
+begin
+  delete from public.church_service_times where id = current_setting('app.time_b_1')::uuid;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA V5: b1 nao conseguiu apagar o proprio horario (% linhas)', n; end if;
+end $$;
+rollback to savepoint v5;
+
+-- V6: SuperAdmin atravessa igrejas — le a pendente que a vitrine esconde, cria
+-- na B, edita na A, apaga na A. E a mesma regra das outras tabelas de cadastro.
+savepoint v6;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_su'))::text, true);
+do $$
+declare n int;
+begin
+  select count(*) into n from public.church_service_times
+  where id = current_setting('app.time_c_1')::uuid;
+  if n <> 1 then raise exception 'RLS-FALHA V6: SuperAdmin nao leu o horario da igreja pendente (% linhas)', n; end if;
+
+  insert into public.church_service_times (church_id, weekday, starts_at, name)
+  values (current_setting('app.church_b')::uuid, 5, '20:00', 'Culto do SuperAdmin');
+  select count(*) into n from public.church_service_times
+  where church_id = current_setting('app.church_b')::uuid and name = 'Culto do SuperAdmin';
+  if n <> 1 then raise exception 'RLS-FALHA V6: SuperAdmin nao inseriu na igreja B (% linhas)', n; end if;
+
+  update public.church_service_times set name = 'Culto da Familia (su)'
+  where id = current_setting('app.time_a_1')::uuid;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA V6: SuperAdmin nao editou horario da A (% linhas)', n; end if;
+
+  delete from public.church_service_times where id = current_setting('app.time_a_2')::uuid;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA V6: SuperAdmin nao apagou horario da A (% linhas)', n; end if;
+end $$;
+rollback to savepoint v6;
+
+-- V7: os CHECKs da tabela — a validacao do app e conveniencia, a do banco e a
+-- cerca. Dia fora de 0..6 e nome fora de 2..80 nao entram de nenhuma origem.
+savepoint v7;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+begin
+  begin
+    insert into public.church_service_times (church_id, weekday, starts_at, name)
+    values (current_setting('app.church_a')::uuid, 7, '09:00', 'Dia sete');
+    raise exception 'RLS-FALHA V7: weekday=7 entrou na tabela';
+  exception when check_violation then null; end;
+
+  begin
+    insert into public.church_service_times (church_id, weekday, starts_at, name)
+    values (current_setting('app.church_a')::uuid, -1, '09:00', 'Dia menos um');
+    raise exception 'RLS-FALHA V7: weekday=-1 entrou na tabela';
+  exception when check_violation then null; end;
+
+  begin
+    insert into public.church_service_times (church_id, weekday, starts_at, name)
+    values (current_setting('app.church_a')::uuid, 1, '09:00', ' C ');
+    raise exception 'RLS-FALHA V7: nome de 1 caractere (apos btrim) entrou na tabela';
+  exception when check_violation then null; end;
+
+  begin
+    insert into public.church_service_times (church_id, weekday, starts_at, name)
+    values (current_setting('app.church_a')::uuid, 1, '09:00', repeat('x', 81));
+    raise exception 'RLS-FALHA V7: nome de 81 caracteres entrou na tabela';
+  exception when check_violation then null; end;
+end $$;
+rollback to savepoint v7;
+
+-- V8: a filial do horario e da mesma igreja — no insert e na mudanca de filial
+-- responde o trigger (42501 igual para "filial da B" e para filial inexistente:
+-- mesma mensagem, sem oraculo de existencia); na mudanca da IGREJA do horario,
+-- quem segura e o WITH CHECK da politica, que reavalia church.manage no destino.
+savepoint v8;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+do $$
+declare n int;
+begin
+  begin
+    insert into public.church_service_times (church_id, branch_id, weekday, starts_at, name)
+    values (current_setting('app.church_a')::uuid, current_setting('app.branch_b_1')::uuid, 4, '15:00', 'Vigilia na filial alheia');
+    raise exception 'RLS-FALHA V8: horario da A apontou para filial da B e entrou';
+  exception when insufficient_privilege then null; end;
+
+  begin
+    insert into public.church_service_times (church_id, branch_id, weekday, starts_at, name)
+    values (current_setting('app.church_a')::uuid, '99999999-0000-4000-8000-00000000dead', 4, '15:00', 'Vigilia na filial fantasma');
+    raise exception 'RLS-FALHA V8: horario apontou para filial inexistente e entrou';
+  exception when insufficient_privilege then null; end;
+
+  begin
+    update public.church_service_times
+       set branch_id = current_setting('app.branch_b_1')::uuid
+     where id = current_setting('app.time_a_1')::uuid;
+    raise exception 'RLS-FALHA V8: horario existente foi re-vinculado a filial da B';
+  exception when insufficient_privilege then null; end;
+
+  begin
+    update public.church_service_times
+       set church_id = current_setting('app.church_b')::uuid
+     where id = current_setting('app.time_a_1')::uuid;
+    raise exception 'RLS-FALHA V8: horario foi transferido para a igreja B';
+  exception when insufficient_privilege then null; end;
+
+  -- Vinculo valido passa: a filial Zona Sul e da A (mesmo sem coordenada).
+  update public.church_service_times
+     set branch_id = current_setting('app.branch_a_zs')::uuid
+   where id = current_setting('app.time_a_1')::uuid;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'RLS-FALHA V8: vinculo legitimo (filial da propria igreja) foi recusado (% linhas)', n; end if;
+end $$;
+rollback to savepoint v8;
+
+-- V9: apagar a filial NAO apaga o horario — `on delete set null` preserva a
+-- memoria do culto. A filial sai do banco (aqui via service_role, para medir a
+-- FK isolada da politica) e a linha do horario continua la, sem filial. O
+-- caminho autenticado do app — delete por quem tem church.manage — esta no O12,
+-- e a decisao de abrir o delete e a 0025.
+savepoint v9;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('role','authenticated','sub',current_setting('app.user_a1'))::text, true);
+insert into public.church_service_times (church_id, branch_id, weekday, starts_at, name)
+values (current_setting('app.church_a')::uuid, current_setting('app.branch_a_zs')::uuid, 5, '16:00', 'Encontro de Jovens — Zona Sul');
+
+set local role service_role;
+delete from public.church_branches where id = current_setting('app.branch_a_zs')::uuid;
+do $$
+declare n int;
+begin
+  select count(*) into n from public.church_service_times
+  where name = 'Encontro de Jovens — Zona Sul';
+  if n <> 1 then
+    raise exception 'RLS-FALHA V9: o delete da filial levou o horario junto (% linhas; esperava 1 preservada)', n;
+  end if;
+
+  select count(*) into n from public.church_service_times
+  where name = 'Encontro de Jovens — Zona Sul' and branch_id is null;
+  if n <> 1 then
+    raise exception 'RLS-FALHA V9: horario sobreviveu mas ficou apontando para filial morta (branch_id nao virou null: % linhas certas)', n;
+  end if;
+end $$;
+rollback to savepoint v9;
+
+-- V10: guardas estruturais da 0023 — o que nao da para medir pelo
+-- comportamento e medido pelo catalogo, nos termos das decisoes da migração.
+do $$
+declare n int; pinned boolean;
+begin
+  -- A funcao do trigger existe, e SECURITY DEFINER e nao e executavel por nadie
+  -- de fora (search_path fixo: o padrao das outras guardas).
+  select exists (select 1 from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+                 where ns.nspname = 'public' and p.proname = 'enforce_service_time_branch') into pinned;
+  if not pinned then raise exception 'RLS-FALHA V10: enforce_service_time_branch() sumiu de public'; end if;
+
+  select p.prosecdef, (p.proconfig @> array['search_path=public']::text[])::int into pinned, n
+  from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+  where ns.nspname = 'public' and p.proname = 'enforce_service_time_branch';
+  if not pinned then raise exception 'RLS-FALHA V10: enforce_service_time_branch() nao e SECURITY DEFINER'; end if;
+  if n <> 1 then raise exception 'RLS-FALHA V10: enforce_service_time_branch() sem search_path fixo'; end if;
+
+  if has_function_privilege('anon', 'public.enforce_service_time_branch()', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.enforce_service_time_branch()', 'EXECUTE') then
+    raise exception 'RLS-FALHA V10: anon/authenticated recuperou EXECUTE na funcao do trigger';
+  end if;
+
+  -- Os dois triggers estao attachados na tabela.
+  select count(*) into n from pg_trigger
+  where tgrelid = 'public.church_service_times'::regclass and not tgisinternal
+    and tgname in ('trg_church_service_times_updated', 'trg_church_service_times_branch');
+  if n <> 2 then raise exception 'RLS-FALHA V10: faltam triggers na tabela (% dos 2)', n; end if;
+
+  -- As duas FKs com o delete certo: cascade na igreja, set null na filial.
+  select count(*) into n from pg_constraint
+  where conrelid = 'public.church_service_times'::regclass and contype = 'f'
+    and confrelid = 'public.churches'::regclass and confdeltype = 'c';
+  if n <> 1 then raise exception 'RLS-FALHA V10: FK churches sem ON DELETE CASCADE (% linhas)', n; end if;
+  select count(*) into n from pg_constraint
+  where conrelid = 'public.church_service_times'::regclass and contype = 'f'
+    and confrelid = 'public.church_branches'::regclass and confdeltype = 'n';
+  if n <> 1 then raise exception 'RLS-FALHA V10: FK church_branches sem ON DELETE SET NULL (% linhas)', n; end if;
+
+  -- Os CHECKs que a decisao 3 da migração promete: dia e nome.
+  select count(*) into n from pg_constraint
+  where conrelid = 'public.church_service_times'::regclass and contype = 'c';
+  if n <> 2 then raise exception 'RLS-FALHA V10: esperava 2 CHECKs (weekday, name), encontrei %', n; end if;
+
+  -- Grants exatamente como a 0023 declara: anon so le; authenticated le e escreve.
+  select count(*) into n from information_schema.role_table_grants
+  where table_schema = 'public' and table_name = 'church_service_times' and grantee = 'anon';
+  if n <> 1 then raise exception 'RLS-FALHA V10: anon tem % grant(s) em church_service_times, esperava 1 (select)', n; end if;
+  select count(distinct privilege_type) into n from information_schema.role_table_grants
+  where table_schema = 'public' and table_name = 'church_service_times' and grantee = 'authenticated'
+    and privilege_type in ('SELECT','INSERT','UPDATE','DELETE');
+  if n <> 4 then raise exception 'RLS-FALHA V10: authenticated nao tem o conjunto select/insert/update/delete (% dos 4)', n; end if;
+  select count(*) into n from information_schema.role_table_grants
+  where table_schema = 'public' and table_name = 'church_service_times' and grantee = 'anon'
+    and privilege_type <> 'SELECT';
+  if n <> 0 then raise exception 'RLS-FALHA V10: anon tem grant de escrita na vitrine (% linhas)', n; end if;
+
+  -- Tipos que o servico espera: smallint (0..6) e time, RLS ligada.
+  select count(*) into n from information_schema.columns
+  where table_schema = 'public' and table_name = 'church_service_times'
+    and ((column_name = 'weekday' and data_type = 'smallint')
+      or (column_name = 'starts_at' and data_type = 'time without time zone'));
+  if n <> 2 then raise exception 'RLS-FALHA V10: weekday/starts_at fora dos tipos da decisao 3 (% dos 2)', n; end if;
+
+  select relrowsecurity into pinned from pg_class where oid = 'public.church_service_times'::regclass;
+  if not pinned then raise exception 'RLS-FALHA V10: RLS desligada em church_service_times'; end if;
+end $$;
 
 do $$ begin raise notice 'RLS-ISOLATION: todos os casos passaram'; end $$;
 

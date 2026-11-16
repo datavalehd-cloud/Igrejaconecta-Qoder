@@ -154,8 +154,9 @@ export interface PlatformUser {
 /**
  * Filial / congregação (0013). É dado de **gestão**: a leitura vale para membro
  * ativo da própria igreja e para o SuperAdmin, e `anon` não tem grant nenhum — o
- * mapa público plota igrejas (`churches.lat/lng`), não filiais. Sem delete: a
- * tela não oferece excluir porque a tabela não tem política nem grant de delete.
+ * mapa público plota igrejas (`churches.lat/lng`), não filiais. Excluir abriu-se
+ * na 0025 com a régua `church.manage`; evento e horário vinculados sobrevivem
+ * como "sem filial" (`on delete set null`, casos O11/O12 da suíte).
  */
 export interface ChurchBranch {
   id: string
@@ -167,6 +168,42 @@ export interface ChurchBranch {
   lat?: number | null
   lng?: number | null
   leader?: string | null
+}
+
+/**
+ * Horário de culto (0023). Escrita é `church.manage` (dado do cadastro); a
+ * leitura é pública com a cerca da vitrine: `anon` só vê horários de igreja
+ * aprovada e ativa — é o que cumpre a promessa "aparecem no perfil público e no
+ * mapa". `weekday` 0 = domingo; o rótulo em português é decisão de UI.
+ */
+export interface ChurchServiceTime {
+  id: string
+  church_id: string
+  branch_id?: string | null
+  weekday: number
+  starts_at: string
+  name: string
+}
+
+/**
+ * Rede de igrejas (0017). `churches_count` vem da view `church_network_list`
+ * — contado pelo banco, nunca digitado. A audiência é assimétrica de propósito:
+ * SuperAdmin vê todas; o membro só as redes das suas igrejas ativas. `anon` não
+ * tem grant nenhum: rede não é vitrine pública.
+ */
+export interface ChurchNetwork {
+  id: string
+  name: string
+  slug: string
+  description?: string | null
+  churches_count: number
+}
+
+/** Vínculo `church_network_churches` (0017) com a igreja embutida pela FK. */
+export interface NetworkChurch {
+  network_id: string
+  church_id: string
+  churches?: { id: string; name: string } | null
 }
 
 /** Shape da view `ministry_list` (0015): líder por uuid + nome, contagem no banco. */
@@ -207,6 +244,8 @@ export interface ChurchEvent {
   address?: string | null
   city?: string | null
   cover_url?: string | null
+  /** Link de vídeo (0024): YouTube ou Vimeo em forma canônica — o CHECK do banco recusa o resto. */
+  video_url?: string | null
   capacity?: number | null
   is_free: boolean
   visibility: EventVisibility
@@ -250,7 +289,8 @@ export interface Registration {
   church_id?: string
   user_id?: string | null
   visitor_name: string
-  visitor_email: string
+  /** Opcional desde a 0026: o visitante pode se inscrever sem informar e-mail. */
+  visitor_email: string | null
   visitor_phone?: string | null
   status: RegistrationStatus
   ticket_code?: string
